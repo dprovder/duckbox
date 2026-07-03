@@ -6,18 +6,23 @@ Analyze audio with SQL functions, then `COPY` a table straight to a CDJ-ready US
 ```sql
 LOAD rekordbox;
 
--- INSERT does the analysis (decode + aubio/libKeyFinder/Essentia in C++)
-CREATE TABLE lib AS
-SELECT file AS path,
-       rb_bpm(file)      AS bpm,      -- DOUBLE
-       rb_key(file)      AS key,      -- VARCHAR, Camelot (e.g. '6A')   ✅ implemented
-       rb_beatgrid(file) AS beats,    -- DOUBLE[]  beat timestamps
-       rb_loudness(file) AS loud      -- STRUCT(lufs, true_peak, lra)
-FROM glob('~/Music/Hau5/*.m4a');
+-- Analyze the whole library ONCE (single decode per file) into a table.
+-- rb_analyze does all the work: decode + aubio + libKeyFinder + libebur128 in C++.
+CREATE TABLE library AS
+SELECT file AS path, a.bpm, a.key, a.beatgrid, a.lufs, a.true_peak, a.lra
+FROM (SELECT file, rb_analyze(file) AS a FROM glob('~/Music/Hau5/*.m4a'));
+--   a = STRUCT(bpm DOUBLE, key VARCHAR, beatgrid DOUBLE[], lufs, true_peak, lra)
 
--- COPY writes the whole Pioneer tree: export.pdb + per-track ANLZ
-COPY lib TO '/Volumes/MYUSB' (FORMAT rekordbox);
+-- From here it's just fast SQL over the stored table — no re-analysis:
+SELECT path, bpm, key FROM library WHERE key='8A' AND bpm BETWEEN 124 AND 128;
+
+-- COPY writes the whole Pioneer tree: export.pdb + per-track ANLZ (serializer WIP)
+COPY library TO '/Volumes/MYUSB' (FORMAT rekordbox);
 ```
+
+**`rb_analyze(path)` is the primary entry point** — one decode, all features, meant to be
+materialized into a table you query forever. The single-purpose functions below still exist
+for ad-hoc use.
 
 ## Status
 
@@ -25,10 +30,12 @@ COPY lib TO '/Volumes/MYUSB' (FORMAT rekordbox);
 |---|---|
 | Extension skeleton, registration, build files | ✅ scaffolded |
 | `audio_decode` (FFmpeg → mono float PCM) | ✅ implemented |
-| `rb_key` (libKeyFinder → Camelot) | ✅ implemented (ported from `../src/../kfcli`) |
-| `rb_bpm` / `rb_beatgrid` (aubio) | ⬜ stubbed w/ API notes |
-| `rb_loudness` (libebur128) | ⬜ stubbed |
-| `COPY (FORMAT rekordbox)` → `export.pdb` | ⬜ plumbing done; DeviceSQL serializer TODO |
+| `rb_analyze` (one decode → all features STRUCT) | ✅ implemented — **use this** |
+| `rb_key` (libKeyFinder → Camelot) | ✅ implemented |
+| `rb_bpm` / `rb_beatgrid` (aubio) | ✅ implemented |
+| `rb_loudness` (libebur128 → LUFS/true-peak/LRA) | ✅ implemented |
+| `COPY (FORMAT rekordbox)` → `export.pdb` | 🟡 plumbing + combine done; DeviceSQL serializer TODO (see `SERIALIZER_DESIGN.md`) |
+| High-level (danceability/mood/genre) | ⬜ Essentia — see `ESSENTIA_INTEGRATION.md` |
 | ANLZ writer (PQTZ beatgrid / PPTH / PWAV) | ⬜ stubbed |
 | High-level via Essentia (danceability/mood/genre) | ⬜ optional `-DWITH_ESSENTIA=ON` |
 
