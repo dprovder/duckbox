@@ -17,7 +17,7 @@ CMake Warning at CMakeLists.txt:479 (message):
 -- git hash a81547b, version v0.0.1, extension folder v0.0.1
 -- Build workers: compile= link_release=4 link_non_release=2
 -- Extensions will be deployed to: /Users/danielprovder/Music/rekordbox-duck/ext-rekordbox/build/release/repository
--- Load extension 'rekordbox' from '/Users/danielprovder/Music/rekordbox-duck/ext-rekordbox' @ 2a56ace
+-- Load extension 'rekordbox' from '/Users/danielprovder/Music/rekordbox-duck/ext-rekordbox' @ 7351e27
 -- Load extension 'core_functions' from '/Users/danielprovder/Music/rekordbox-duck/ext-rekordbox/duckdb/extensions' @ v0.0.1
 -- Load extension 'parquet' from '/Users/danielprovder/Music/rekordbox-duck/ext-rekordbox/duckdb/extensions' @ v0.0.1
 CMake Warning at extension/extension_build_tools.cmake:652 (message):
@@ -31,21 +31,25 @@ Call Stack (most recent call first):
 
 -- Extensions linked into DuckDB: [rekordbox, core_functions, parquet]
 -- Tests loaded for extensions: [rekordbox]
--- Configuring done (1.4s)
+-- Configuring done (1.2s)
 -- Generating done (0.2s)
 -- Build files have been written to: /Users/danielprovder/Music/rekordbox-duck/ext-rekordbox/build/release
 cmake --build build/release --config Release
-[1/12] Updating .cache/clangd (release)
-[2/12] Building CXX object extension/rekordbox/CMakeFiles/rekordbox_extension.dir/src/pdb_writer.cpp.o
-[3/12] Building CXX object extension/rekordbox/CMakeFiles/rekordbox_loadable_extension.dir/src/pdb_writer.cpp.o
-[4/12] Building CXX object extension/rekordbox/CMakeFiles/rekordbox_extension.dir/src/analysis.cpp.o
-[5/12] Building CXX object extension/rekordbox/CMakeFiles/rekordbox_loadable_extension.dir/src/analysis.cpp.o
-[6/12] Linking CXX static library extension/rekordbox/librekordbox_extension.a
-[7/12] Linking CXX shared library extension/rekordbox/rekordbox.duckdb_extension
-[8/12] Linking CXX shared library src/libduckdb.dylib
-[9/12] Linking CXX executable test/unittest
-[10/12] Linking CXX executable tools/plan_serializer
+[1/16] Updating .cache/clangd (release)
+[2/16] Building CXX object extension/rekordbox/CMakeFiles/rekordbox_extension.dir/src/audio_decode.cpp.o
+[3/16] Building CXX object extension/rekordbox/CMakeFiles/rekordbox_loadable_extension.dir/src/audio_decode.cpp.o
+[4/16] Building CXX object extension/rekordbox/CMakeFiles/rekordbox_extension.dir/src/pdb_writer.cpp.o
+[5/16] Building CXX object extension/rekordbox/CMakeFiles/rekordbox_loadable_extension.dir/src/pdb_writer.cpp.o
+[6/16] Building CXX object extension/rekordbox/CMakeFiles/rekordbox_extension.dir/src/rekordbox_extension.cpp.o
+[7/16] Building CXX object extension/rekordbox/CMakeFiles/rekordbox_loadable_extension.dir/src/rekordbox_extension.cpp.o
+[8/16] Building CXX object extension/rekordbox/CMakeFiles/rekordbox_extension.dir/src/analysis.cpp.o
+[9/16] Building CXX object extension/rekordbox/CMakeFiles/rekordbox_loadable_extension.dir/src/analysis.cpp.o
+[10/16] Linking CXX static library extension/rekordbox/librekordbox_extension.a
+[11/16] Linking CXX shared library extension/rekordbox/rekordbox.duckdb_extension
+[12/16] Linking CXX executable duckdb
 ld: warning: ignoring duplicate libraries: 'src/libduckdb_static.a'
-[11/12] Linking CXX executable duckdb
+[13/16] Linking CXX executable tools/plan_serializer
 ld: warning: ignoring duplicate libraries: 'src/libduckdb_static.a'
-[12/12] repository
+[14/16] Linking CXX shared library src/libduckdb.dylib
+[15/16] Linking CXX executable test/unittest
+[16/16] repository

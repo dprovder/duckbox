@@ -28,6 +28,18 @@ static void LoadInternal(ExtensionLoader &loader) {
 	    ScalarFunction("rb_loudness", {LogicalType::VARCHAR},
 	                   LogicalType::STRUCT(loud), RbLoudnessFun));
 
+	// rb_analyze(VARCHAR) -> everything, from ONE decode. The workhorse:
+	//   CREATE TABLE lib AS SELECT path, rb_analyze(path).* FROM glob(...)
+	child_list_t<LogicalType> analysis{{"bpm", LogicalType::DOUBLE},
+	                                   {"key", LogicalType::VARCHAR},
+	                                   {"beatgrid", LogicalType::LIST(LogicalType::DOUBLE)},
+	                                   {"lufs", LogicalType::DOUBLE},
+	                                   {"true_peak", LogicalType::DOUBLE},
+	                                   {"lra", LogicalType::DOUBLE}};
+	loader.RegisterFunction(
+	    ScalarFunction("rb_analyze", {LogicalType::VARCHAR},
+	                   LogicalType::STRUCT(analysis), RbAnalyzeFun));
+
 	// ---- the exporter: COPY <tracks> TO 'USB' (FORMAT rekordbox) ----
 	loader.RegisterFunction(RekordboxCopyFunction::Get());
 }

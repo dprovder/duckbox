@@ -75,22 +75,52 @@ static bool AnalyzeLoudness(const rbx::Audio &a, double &lufs, double &tp, doubl
 // Scalar UDFs
 //===--------------------------------------------------------------------===//
 
+// libKeyFinder over already-decoded audio -> Camelot code.
+static std::string KeyOfAudio(const rbx::Audio &audio) {
+	if (!audio.ok || audio.samples.empty()) return "";
+	KeyFinder::AudioData a;
+	a.setFrameRate(audio.sample_rate);
+	a.setChannels(1);
+	a.addToSampleCount(audio.samples.size());
+	for (size_t i = 0; i < audio.samples.size(); i++) a.setSample(i, audio.samples[i]);
+	KeyFinder::KeyFinder kf;
+	int idx = (int)kf.keyOfAudio(a);
+	if (idx < 0 || idx > 24) idx = 24;
+	return CAMELOT[idx];
+}
+
 // rb_key(VARCHAR) -> VARCHAR (Camelot). libKeyFinder.
 void RbKeyFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	UnaryExecutor::Execute<string_t, string_t>(
 	    args.data[0], result, args.size(), [&](string_t path_s) {
-		    auto audio = rbx::DecodeMono(path_s.GetString(), 44100);
-		    if (!audio.ok) return StringVector::AddString(result, "");
-		    KeyFinder::AudioData a;
-		    a.setFrameRate(audio.sample_rate);
-		    a.setChannels(1);
-		    a.addToSampleCount(audio.samples.size());
-		    for (size_t i = 0; i < audio.samples.size(); i++) a.setSample(i, audio.samples[i]);
-		    KeyFinder::KeyFinder kf;
-		    int idx = (int)kf.keyOfAudio(a);
-		    if (idx < 0 || idx > 24) idx = 24;
-		    return StringVector::AddString(result, CAMELOT[idx]);
+		    return StringVector::AddString(result, KeyOfAudio(rbx::DecodeMono(path_s.GetString(), 44100)));
 	    });
+}
+
+// rb_analyze(VARCHAR) -> STRUCT(bpm, key, beatgrid, lufs, true_peak, lra).
+// Decodes the file ONCE and runs every analyzer on the same buffer. This is the
+// function to materialize into a table: `CREATE TABLE lib AS SELECT path,
+// rb_analyze(path).* FROM glob(...)`.
+void RbAnalyzeFun(DataChunk &args, ExpressionState &state, Vector &result) {
+	for (idx_t r = 0; r < args.size(); r++) {
+		Value pv = args.data[0].GetValue(r);
+		auto audio = rbx::DecodeMono(pv.IsNull() ? "" : pv.ToString(), 44100);
+		auto tempo = AnalyzeTempo(audio);
+		std::string key = KeyOfAudio(audio);
+		double lufs = -70, tp = -70, lra = 0;
+		AnalyzeLoudness(audio, lufs, tp, lra);
+
+		vector<Value> beats;
+		for (double b : tempo.beats) beats.push_back(Value::DOUBLE(b));
+		child_list_t<Value> f;
+		f.emplace_back("bpm", Value::DOUBLE(tempo.bpm));
+		f.emplace_back("key", Value(key));
+		f.emplace_back("beatgrid", Value::LIST(LogicalType::DOUBLE, std::move(beats)));
+		f.emplace_back("lufs", Value::DOUBLE(lufs));
+		f.emplace_back("true_peak", Value::DOUBLE(tp));
+		f.emplace_back("lra", Value::DOUBLE(lra));
+		result.SetValue(r, Value::STRUCT(std::move(f)));
+	}
 }
 
 // rb_bpm(VARCHAR) -> DOUBLE. aubio tempo.
