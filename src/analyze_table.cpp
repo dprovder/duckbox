@@ -25,8 +25,13 @@ namespace {
 
 struct AnalyzeDirBind : public TableFunctionData {
 	std::string pattern;
+	int64_t shard = 0, shards = 1; // process-sharding: keep files where index % shards == shard
 };
 
+// Single-threaded on purpose: Essentia's global AlgorithmFactory is NOT
+// thread-safe — running analysis on multiple threads in one process both
+// corrupts results and (via contention) runs slower than serial. Parallelise
+// ACROSS PROCESSES instead (see src/analyze_parallel.sh).
 struct AnalyzeDirState : public GlobalTableFunctionState {
 	std::vector<std::string> files;
 	idx_t index = 0;
@@ -46,6 +51,10 @@ unique_ptr<FunctionData> AnalyzeDirBindFun(ClientContext &context, TableFunction
                                            vector<LogicalType> &return_types, vector<string> &names) {
 	auto bind = make_uniq<AnalyzeDirBind>();
 	bind->pattern = StringValue::Get(input.inputs[0]);
+	auto sh = input.named_parameters.find("shard");
+	auto ns = input.named_parameters.find("shards");
+	if (sh != input.named_parameters.end()) bind->shard = BigIntValue::Get(sh->second);
+	if (ns != input.named_parameters.end()) bind->shards = std::max<int64_t>(1, BigIntValue::Get(ns->second));
 
 	auto add = [&](const char *n, LogicalType t) {
 		names.emplace_back(n);
@@ -85,10 +94,16 @@ unique_ptr<GlobalTableFunctionState> AnalyzeDirInit(ClientContext &context, Tabl
 	if (!FileSystem::HasGlob(pat)) pat += "/*"; // a plain directory -> glob its entries
 
 	auto &fs = FileSystem::GetFileSystem(context);
+	std::vector<std::string> all;
 	for (auto &info : fs.Glob(pat)) {
-		if (IsAudioPath(info.path)) state->files.push_back(info.path);
+		if (IsAudioPath(info.path)) all.push_back(info.path);
 	}
-	std::sort(state->files.begin(), state->files.end());
+	std::sort(all.begin(), all.end());
+	// Keep only this process's shard (stride), so N workers over the same pattern
+	// with shard=0..N-1 partition the files with no overlap.
+	for (size_t i = 0; i < all.size(); i++) {
+		if ((int64_t)(i % (size_t)bind.shards) == bind.shard) state->files.push_back(all[i]);
+	}
 	return std::move(state);
 }
 
@@ -99,9 +114,9 @@ Value DblList(const std::vector<double> &v) {
 	return Value::LIST(LogicalType::DOUBLE, std::move(out));
 }
 
+// Emit a small batch per call so the query stays cancellable and streams.
 void AnalyzeDirFunc(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
 	auto &state = data_p.global_state->Cast<AnalyzeDirState>();
-	// Emit a small batch per call so the query stays cancellable and streams.
 	const idx_t BATCH = 16;
 	idx_t row = 0;
 	while (state.index < state.files.size() && row < BATCH) {
@@ -171,8 +186,11 @@ unique_ptr<TableRef> AudioReplacementScan(ClientContext &context, ReplacementSca
 } // namespace
 
 TableFunction GetAnalyzeDirFunction() {
-	return TableFunction("rb_analyze_dir", {LogicalType::VARCHAR}, AnalyzeDirFunc, AnalyzeDirBindFun,
-	                     AnalyzeDirInit);
+	TableFunction tf("rb_analyze_dir", {LogicalType::VARCHAR}, AnalyzeDirFunc, AnalyzeDirBindFun,
+	                 AnalyzeDirInit);
+	tf.named_parameters["shard"] = LogicalType::BIGINT;
+	tf.named_parameters["shards"] = LogicalType::BIGINT;
+	return tf;
 }
 
 void RegisterAudioReplacementScan(DatabaseInstance &db) {
