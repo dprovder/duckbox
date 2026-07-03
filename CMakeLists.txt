@@ -11,6 +11,10 @@ set(EXTENSION_SOURCES
     src/rekordbox_extension.cpp
     src/audio_decode.cpp
     src/analysis.cpp
+    src/essentia_analysis.cpp
+    src/analyze_table.cpp
+    src/waveform.cpp
+    src/anlz_writer.cpp
     src/pdb_writer.cpp)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
@@ -30,10 +34,18 @@ find_library(KEYFINDER_LIB keyfinder PATHS /opt/homebrew/lib /usr/local/lib)
 find_library(AUBIO_LIB aubio PATHS /opt/homebrew/lib /usr/local/lib)
 find_library(EBUR128_LIB ebur128 PATHS /opt/homebrew/lib /usr/local/lib)
 
-# Essentia (high-level: danceability/mood/genre) is OPTIONAL and source-built.
-option(WITH_ESSENTIA "Link Essentia for high-level descriptors" OFF)
+# Essentia (rhythm/danceability/descriptors) is OPTIONAL and source-built into
+# ../deps/essentia/install (lightweight static: KISS FFT, no ffmpeg/taglib/gaia).
+# Build once: see ESSENTIA_INTEGRATION.md, then `make release WITH_ESSENTIA=ON`.
+option(WITH_ESSENTIA "Link Essentia for rhythm + high-level descriptors" OFF)
 if(WITH_ESSENTIA)
-  find_library(ESSENTIA_LIB essentia REQUIRED)
+  # NOTE: under DuckDB's extension build, CMAKE_SOURCE_DIR is the *duckdb* root,
+  # so anchor on this CMakeLists' own dir (ext-rekordbox) instead.
+  set(ESSENTIA_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../deps/essentia/install)
+  find_library(ESSENTIA_LIB essentia PATHS ${ESSENTIA_ROOT}/lib REQUIRED)
+  find_path(ESSENTIA_INC essentia/algorithmfactory.h PATHS ${ESSENTIA_ROOT}/include REQUIRED)
+  # Essentia headers pull in Eigen (header-only, from Homebrew).
+  find_path(EIGEN_INC eigen3/Eigen/Core PATHS /opt/homebrew/include /usr/local/include REQUIRED)
   add_compile_definitions(HAVE_ESSENTIA)
 endif()
 
@@ -44,6 +56,9 @@ endif()
 
 foreach(t ${EXTENSION_NAME} ${LOADABLE_EXTENSION_NAME})
   target_include_directories(${t} PRIVATE ${FFMPEG_INCLUDE_DIRS} ${KEYFINDER_INCLUDE})
+  if(WITH_ESSENTIA)
+    target_include_directories(${t} PRIVATE ${ESSENTIA_INC} ${EIGEN_INC}/eigen3)
+  endif()
   target_link_libraries(${t} ${LINK_LIBS})
 endforeach()
 

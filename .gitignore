@@ -1,2 +1,6 @@
 build/
 *.duckdb_extension
+
+# build logs, editor cache
+*.log
+.cache/

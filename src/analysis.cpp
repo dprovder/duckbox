@@ -145,6 +145,31 @@ void RbBeatgridFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
 }
 
+// Unified per-track analysis: one decode, every analyzer. Essentia supplies the
+// rhythm/downbeat/danceability when linked; aubio is the fallback. Key + loudness
+// always come from libKeyFinder + libebur128.
+TrackFeatures AnalyzeTrack(const std::string &path) {
+	TrackFeatures f;
+	auto audio = rbx::DecodeMono(path, 44100);
+	if (!audio.ok || audio.samples.empty()) return f;
+	f.ok = true;
+#ifdef HAVE_ESSENTIA
+	FillEssentiaFeatures(audio, f);
+#else
+	auto t = AnalyzeTempo(audio);
+	f.bpm = t.bpm;
+	f.beats = t.beats;
+	f.beat_count = (int32_t)t.beats.size();
+#endif
+	f.key_camelot = KeyOfAudio(audio);
+	double lufs = -70, tp = -70, lra = 0;
+	AnalyzeLoudness(audio, lufs, tp, lra);
+	f.lufs = lufs;
+	f.true_peak = tp;
+	f.lra = lra;
+	return f;
+}
+
 // rb_loudness(VARCHAR) -> STRUCT(lufs, true_peak, lra). libebur128.
 void RbLoudnessFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto count = args.size();

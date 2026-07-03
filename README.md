@@ -1,109 +1,132 @@
 # duckdb-rekordbox
 
 A DuckDB extension that turns DuckDB into a **DJ analysis engine + rekordbox USB exporter**.
-Analyze audio with SQL functions, then `COPY` a table straight to a CDJ-ready USB — no rekordbox app.
+Read an audio folder *as a table*, keep the analysis in DuckDB, and `COPY` a CDJ-ready USB —
+no rekordbox app involved.
 
 ```sql
-LOAD rekordbox;
+-- An audio folder is a table (replacement scan → in-C++ analysis, one decode/file).
+CREATE TABLE track_analysis AS SELECT * FROM '~/Music/Hau5';
 
--- Analyze the whole library ONCE (single decode per file) into a table.
--- rb_analyze does all the work: decode + aubio + libKeyFinder + libebur128 in C++.
-CREATE TABLE library AS
-SELECT file AS path, a.bpm, a.key, a.beatgrid, a.lufs, a.true_peak, a.lra
-FROM (SELECT file, rb_analyze(file) AS a FROM glob('~/Music/Hau5/*.m4a'));
---   a = STRUCT(bpm DOUBLE, key VARCHAR, beatgrid DOUBLE[], lufs, true_peak, lra)
+-- Derive the waveforms and the beat grid from what was analysed.
+CREATE TABLE waveform AS SELECT pos, w.* FROM (SELECT pos, rb_waveform(path) AS w FROM track_analysis);
+CREATE TABLE beatgrid AS
+  SELECT pos, (i-1)::INT AS beat_index, round(t*1000)::INT AS time_ms,
+         ((((i-1)-greatest(downbeat_index,0))%4+4)%4+1)::USMALLINT AS beat_number,
+         round(bpm*100)::USMALLINT AS tempo
+  FROM track_analysis, unnest(beats) WITH ORDINALITY AS u(t,i);
 
--- From here it's just fast SQL over the stored table — no re-analysis:
-SELECT path, bpm, key FROM library WHERE key='8A' AND bpm BETWEEN 124 AND 128;
-
--- COPY writes the whole Pioneer tree: export.pdb + per-track ANLZ (serializer WIP)
-COPY library TO '/Volumes/MYUSB' (FORMAT rekordbox);
+-- One line writes the whole Pioneer tree: export.pdb + per-track ANLZ0000.DAT/.EXT.
+COPY rb_deck TO '/Volumes/USB' (FORMAT rekordbox);
 ```
 
-**`rb_analyze(path)` is the primary entry point** — one decode, all features, meant to be
-materialized into a table you query forever. The single-purpose functions below still exist
-for ad-hoc use.
+The full pipeline (including the `rb_deck` export view) is in [`sql/analyze.sql`](sql/analyze.sql).
 
-## Status
+## Idea
 
-| Piece | State |
+**DuckDB is the source of truth.** Audio is analysed once into ordinary tables; the rekordbox
+`export.pdb` database and the `USBANLZ` analysis files are just *export projections* of those
+tables — produced by `COPY … (FORMAT rekordbox)`. Everything is queryable SQL in between.
+
+## Analysis
+
+All analysis is C++ over a single in-process decode per file (FFmpeg → mono float PCM):
+
+- **Rhythm** — Essentia `RhythmExtractor2013` (BPM, beat ticks, confidence), plus a deeper pass:
+  meter, **downbeat inferred from the low-band/kick energy phase**, tempo-stability
+  (inter-beat-interval spread), onset rate, and per-beat loudness / kick pattern.
+- **Key** — libKeyFinder → Camelot (`8A`, `6B`, …).
+- **Loudness** — libebur128 → integrated LUFS, true-peak, loudness range.
+- **Danceability** — Essentia.
+- **Waveforms** — 3-band (RBJ biquad) split → per-column height + low/mid/high energy at
+  rekordbox's native 150 columns/second.
+
+## Functions
+
+**Read audio as a table** (a replacement scan makes the path form work anywhere a table does):
+
+```sql
+SELECT bpm, key_camelot, meter FROM '~/Music/Hau5/*.m4a';   -- or rb_analyze_dir('~/Music/Hau5')
+```
+→ one row per file: `pos, path, filename, bpm, confidence, beat_count, meter, downbeat_index,
+downbeat_sec, ibi_stddev_ms, onset_rate, danceability, key_camelot, lufs, true_peak, lra,
+beats[], beat_loudness[], kick_pattern[]`.
+
+**Scalar UDFs** (each takes a file path):
+
+| function | returns |
 |---|---|
-| Extension skeleton, registration, build files | ✅ scaffolded |
-| `audio_decode` (FFmpeg → mono float PCM) | ✅ implemented |
-| `rb_analyze` (one decode → all features STRUCT) | ✅ implemented — **use this** |
-| `rb_key` (libKeyFinder → Camelot) | ✅ implemented |
-| `rb_bpm` / `rb_beatgrid` (aubio) | ✅ implemented |
-| `rb_loudness` (libebur128 → LUFS/true-peak/LRA) | ✅ implemented |
-| `COPY (FORMAT rekordbox)` → `export.pdb` | 🟡 plumbing + combine done; DeviceSQL serializer TODO (see `SERIALIZER_DESIGN.md`) |
-| High-level (danceability/mood/genre) | ⬜ Essentia — see `ESSENTIA_INTEGRATION.md` |
-| ANLZ writer (PQTZ beatgrid / PPTH / PWAV) | ⬜ stubbed |
-| High-level via Essentia (danceability/mood/genre) | ⬜ optional `-DWITH_ESSENTIA=ON` |
+| `rb_rhythm(path)` | `STRUCT(bpm, confidence, beats[])` |
+| `rb_rhythm_deep(path)` | `STRUCT(bpm, confidence, beat_count, meter, downbeat_index, downbeat_sec, ibi_stddev_ms, onset_rate, beats[], beat_loudness[], kick_pattern[])` |
+| `rb_key(path)` | `VARCHAR` (Camelot) |
+| `rb_bpm` / `rb_beatgrid` / `rb_loudness` / `rb_analyze` | scalar / `DOUBLE[]` / `STRUCT` |
+| `rb_danceability(path)` | `DOUBLE` |
+| `rb_waveform(path)` | `STRUCT(cols, height[], low[], mid[], high[])` |
+| `rb_anlz_dat(path, beats[], bpm, downbeat, height[], low[], mid[], high[])` | `BLOB` (ANLZ `.DAT`) |
+| `rb_anlz_ext(path, height[], low[], mid[], high[])` | `BLOB` (ANLZ `.EXT`) |
 
-The `.pdb`/ANLZ byte layout is already reverse-mapped in [`../NOTES.md`](../NOTES.md) and there are
-compiled parsers in [`../src/parsers/`](../src/parsers) plus reference databases in
-[`../test/`](../test) for round-trip validation.
+**Export:** `COPY <relation> TO '<usb-root>' (FORMAT rekordbox)` writes
+`PIONEER/rekordbox/export.pdb` and `PIONEER/USBANLZ/Pxxx/xxxxxxxx/ANLZ0000.DAT`+`.EXT`. The sink
+maps input columns by name, so any relation exposing `title, artist, bpm, key, beats, height,
+low, mid, high, …` works (`rb_deck` is just a convenient view over the store).
 
-## Bootstrap (one-time)
+## What lands on the USB
 
-This uses the standard DuckDB extension build. From this directory:
+- **`export.pdb`** (DeviceSQL): tracks + interned artists / albums / genres / labels / keys, an
+  "All Tracks" playlist, and `analyze_path` pointing at each ANLZ file. UTF-16 metadata handled.
+- **`ANLZ0000.DAT`**: `PPTH` path, `PQTZ` beat grid, `PWAV`/`PWV2` mono previews, `PVBR` seek index.
+- **`ANLZ0000.EXT`**: `PWV3` mono scroll, `PWV4` colour preview, `PWV5` colour scroll (the NXS2 look).
 
-```sh
-# 1. get DuckDB + the extension build tooling as submodules
-git init && git submodule add https://github.com/duckdb/duckdb
-git submodule add https://github.com/duckdb/extension-ci-tools
-git checkout -b main   # pin duckdb/ to your target tag, e.g. v1.5.3
+## Validation
 
-# 2. system deps not in vcpkg
-brew install libkeyfinder aubio libebur128     # FFmpeg comes via vcpkg
-```
+Structure is checked by round-tripping generated bytes back through the Kaitai specs in
+[`../specs/`](../specs) (`rekordbox_pdb.ksy`, `rekordbox_anlz.ksy`). The **`export.pdb` writer is
+calibrated against real ground truth** ([`../test/demo_export.pdb`](../test)), so its layout is
+verified, not guessed.
 
-> The linter/IDE errors about `duckdb.hpp not found` disappear after the submodules exist —
-> that's where the DuckDB headers live.
-
-## Build & test
-
-```sh
-make release            # -> build/release/extension/rekordbox/rekordbox.duckdb_extension
-make test               # runs test/sql/*.test
-# high-level descriptors:
-make release WITH_ESSENTIA=ON
-```
-
-Load it (unsigned local build):
-
-```sh
-duckdb -unsigned
-D LOAD './build/release/extension/rekordbox/rekordbox.duckdb_extension';
-D SELECT rb_key('~/Music/Hau5/171 - Pliva.m4a');
-```
+**Known calibration gaps** (fidelity only — they do not block playback; a real rekordbox export
+would let us match them byte-for-byte):
+- Waveform colour/height **gain scaling** is a reasonable guess.
+- **`PVBR`** contents are speculative (the tag isn't fully reverse-engineered); our AAC library
+  seeks via the MP4 container regardless.
+- Not yet done: copying the audio onto the USB and rewriting `file_path` to the on-USB
+  `/Contents/…` path (currently the absolute source path). Needed before a player finds the audio.
 
 ## Architecture
 
 ```
- file path ─► rb_* scalar UDFs ─► DuckDB table ─► COPY(FORMAT rekordbox) ─► /PIONEER/
-              │  audio_decode (FFmpeg)                                        ├ rekordbox/export.pdb
-              │  libKeyFinder (key)                                           └ USBANLZ/**/ANLZ0000.DAT
-              │  aubio (bpm, beatgrid)
-              │  libebur128 (loudness)
-              └  [Essentia] (danceability, mood, genre)   ← optional
+ 'folder' / *.glob ──► rb_analyze_dir (table function + replacement scan) ──► track_analysis
+                          │ audio_decode (FFmpeg → mono PCM)                         │
+                          │ Essentia (rhythm, downbeat, danceability)                ▼
+                          │ libKeyFinder (key)                              waveform / beatgrid
+                          │ libebur128 (loudness)                                    │
+                          └ waveform DSP (3-band @150 col/s)                         ▼
+                                                              rb_deck ─► COPY(FORMAT rekordbox)
+                                                                          ├ rekordbox/export.pdb
+                                                                          └ USBANLZ/**/ANLZ0000.{DAT,EXT}
 ```
 
-- **Analysis** = scalar functions (`src/analysis.cpp`). Each decodes once via `src/audio_decode.cpp`.
-- **Export** = a custom `CopyFunction` (`src/pdb_writer.cpp`). Rows are buffered in the global
-  state and serialized to the multi-page `.pdb` + ANLZ files in `finalize` (a `.pdb` is not a
-  streamable row format).
+Source map: `analysis.cpp` (key/loudness/aubio + unified `AnalyzeTrack`), `essentia_analysis.cpp`
+(rhythm/deep-rhythm/danceability), `analyze_table.cpp` (`rb_analyze_dir` + replacement scan),
+`waveform.cpp` (waveform DSP), `anlz_writer.cpp` (ANLZ `.DAT`/`.EXT`), `pdb_writer.cpp`
+(DeviceSQL `export.pdb` + `COPY` assembly).
 
-## Validation strategy (no CDJ needed until the end)
+## Build
 
-1. Build `export.pdb`, parse it back with `../src/parsers/rekordbox_pdb.py`, diff table/row
-   counts and a track row against `../test/demo_export.pdb`.
-2. Same for ANLZ via `rekordbox_anlz.py`.
-3. Final gate: mount the USB in a CDJ and confirm beatgrids load. Iterate.
+```sh
+brew install libkeyfinder aubio libebur128 ffmpeg fftw eigen libyaml libsamplerate taglib chromaprint pkg-config ninja
+# Essentia is a source build (lightweight static, KISS FFT); see ESSENTIA_INTEGRATION.md.
+GEN=ninja make release EXT_FLAGS=-DWITH_ESSENTIA=ON
+```
+
+Artifacts: `build/release/duckdb` (static — all `rb_*` functions are compiled in, so no `LOAD`
+needed) and `build/release/extension/rekordbox/rekordbox.duckdb_extension` (loadable). The
+DuckDB + extension-ci-tools submodules must be present (see the git history for the bootstrap).
 
 ## Prior art
 
-- [`whisper`](https://duckdb.org/community_extensions/extensions/whisper) — proves the
-  FFmpeg-in-a-DuckDB-extension pattern (transcription, not music analysis).
 - [libKeyFinder](https://mixxxdj.github.io/libkeyfinder/), [aubio](https://aubio.org),
-  [Essentia](https://essentia.upf.edu) — the C++ MIR stack (all used by open-source DJ tools).
-- No existing DuckDB extension does music/DJ analysis or rekordbox export.
+  [Essentia](https://essentia.upf.edu) — the C++ MIR stack used by open-source DJ tools.
+- [Deep Symmetry](https://djl-analysis.deepsymmetry.org/rekordbox-export-analysis/) &
+  [crate-digger](https://github.com/Deep-Symmetry/crate-digger) — the rekordbox format
+  reverse-engineering this builds on.
