@@ -28,6 +28,7 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
 find_path(KEYFINDER_INCLUDE keyfinder/keyfinder.h PATHS /opt/homebrew/include /usr/local/include)
 find_library(KEYFINDER_LIB keyfinder PATHS /opt/homebrew/lib /usr/local/lib)
 find_library(AUBIO_LIB aubio PATHS /opt/homebrew/lib /usr/local/lib)
+find_library(EBUR128_LIB ebur128 PATHS /opt/homebrew/lib /usr/local/lib)
 
 # Essentia (high-level: danceability/mood/genre) is OPTIONAL and source-built.
 option(WITH_ESSENTIA "Link Essentia for high-level descriptors" OFF)
@@ -36,7 +37,7 @@ if(WITH_ESSENTIA)
   add_compile_definitions(HAVE_ESSENTIA)
 endif()
 
-set(LINK_LIBS PkgConfig::FFMPEG ${KEYFINDER_LIB} ${AUBIO_LIB})
+set(LINK_LIBS PkgConfig::FFMPEG ${KEYFINDER_LIB} ${AUBIO_LIB} ${EBUR128_LIB})
 if(WITH_ESSENTIA)
   list(APPEND LINK_LIBS ${ESSENTIA_LIB})
 endif()

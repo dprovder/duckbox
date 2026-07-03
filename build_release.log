@@ -1,27 +1,10 @@
 mkdir -p build/release
 cmake -G "Ninja" -DFORCE_COLORED_OUTPUT=1 -DEXTENSION_STATIC_BUILD=1  -DDUCKDB_EXTENSION_CONFIGS='/Users/danielprovder/Music/rekordbox-duck/ext-rekordbox/extension_config.cmake'   -DOSX_BUILD_ARCH=   -DDUCKDB_EXPLICIT_PLATFORM='' -DCUSTOM_LINKER= -DOVERRIDE_GIT_DESCRIBE="" -DUNITTEST_ROOT_DIRECTORY="/Users/danielprovder/Music/rekordbox-duck/ext-rekordbox/" -DBENCHMARK_ROOT_DIRECTORY="/Users/danielprovder/Music/rekordbox-duck/ext-rekordbox/" -DENABLE_UNITTEST_CPP_TESTS=FALSE -DENABLE_EXTENSION_AUTOLOADING=0 -DENABLE_EXTENSION_AUTOINSTALL=0 -DBUILD_EXTENSION_TEST_DEPS=default   -DCMAKE_BUILD_TYPE=Release -S ./duckdb -B build/release
--- Found Python3: /opt/homebrew/Frameworks/Python.framework/Versions/3.13/bin/python3.13 (found version "3.13.5") found components: Interpreter 
--- The C compiler identification is AppleClang 15.0.0.15000100
--- The CXX compiler identification is AppleClang 15.0.0.15000100
--- Detecting C compiler ABI info
--- Detecting C compiler ABI info - done
--- Check for working C compiler: /Library/Developer/CommandLineTools/usr/bin/cc - skipped
--- Detecting C compile features
--- Detecting C compile features - done
--- Detecting CXX compiler ABI info
--- Detecting CXX compiler ABI info - done
--- Check for working CXX compiler: /Library/Developer/CommandLineTools/usr/bin/c++ - skipped
--- Detecting CXX compile features
--- Detecting CXX compile features - done
--- Performing Test CMAKE_HAVE_LIBC_PTHREAD
--- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
--- Found Threads: TRUE  
 CMake Warning at CMakeLists.txt:331 (message):
   Not disabling vptr sanitizer on M1 Macbook - set DISABLE_VPTR_SANITIZER
   manually if you run into issues with false positives in the sanitizer
 
 
--- Found Git: /usr/bin/git (found version "2.39.3 (Apple Git-145)") 
 fatal: No names found, cannot describe anything.
 CMake Warning at CMakeLists.txt:479 (message):
   git is available (at /usr/bin/git) but has failed to execute 'describe
@@ -34,16 +17,35 @@ CMake Warning at CMakeLists.txt:479 (message):
 -- git hash a81547b, version v0.0.1, extension folder v0.0.1
 -- Build workers: compile= link_release=4 link_non_release=2
 -- Extensions will be deployed to: /Users/danielprovder/Music/rekordbox-duck/ext-rekordbox/build/release/repository
-fatal: your current branch 'main' does not have any commits yet
-CMake Error at extension/extension_build_tools.cmake:432 (message):
-  git is available (at /usr/bin/git) but has failed to execute 'log -1
-  --format=%h'.
+-- Load extension 'rekordbox' from '/Users/danielprovder/Music/rekordbox-duck/ext-rekordbox' @ 2a56ace
+-- Load extension 'core_functions' from '/Users/danielprovder/Music/rekordbox-duck/ext-rekordbox/duckdb/extensions' @ v0.0.1
+-- Load extension 'parquet' from '/Users/danielprovder/Music/rekordbox-duck/ext-rekordbox/duckdb/extensions' @ v0.0.1
+CMake Warning at extension/extension_build_tools.cmake:652 (message):
+  Extension 'rekordbox' has a vcpkg.json, but build was not run with VCPKG.
+  If build fails, check out VCPKG build instructions in
+  'duckdb/extension/README.md' or try manually installing the dependencies in
+  /Users/danielprovder/Music/rekordbox-duck/ext-rekordbox/vcpkg.json
 Call Stack (most recent call first):
-  extension/extension_build_tools.cmake:497 (duckdb_extension_generate_version)
-  /Users/danielprovder/Music/rekordbox-duck/ext-rekordbox/extension_config.cmake:2 (duckdb_extension_load)
-  extension/extension_build_tools.cmake:608 (include)
   CMakeLists.txt:931 (include)
 
 
--- Configuring incomplete, errors occurred!
-make: *** [release] Error 1
+-- Extensions linked into DuckDB: [rekordbox, core_functions, parquet]
+-- Tests loaded for extensions: [rekordbox]
+-- Configuring done (1.4s)
+-- Generating done (0.2s)
+-- Build files have been written to: /Users/danielprovder/Music/rekordbox-duck/ext-rekordbox/build/release
+cmake --build build/release --config Release
+[1/12] Updating .cache/clangd (release)
+[2/12] Building CXX object extension/rekordbox/CMakeFiles/rekordbox_extension.dir/src/pdb_writer.cpp.o
+[3/12] Building CXX object extension/rekordbox/CMakeFiles/rekordbox_loadable_extension.dir/src/pdb_writer.cpp.o
+[4/12] Building CXX object extension/rekordbox/CMakeFiles/rekordbox_extension.dir/src/analysis.cpp.o
+[5/12] Building CXX object extension/rekordbox/CMakeFiles/rekordbox_loadable_extension.dir/src/analysis.cpp.o
+[6/12] Linking CXX static library extension/rekordbox/librekordbox_extension.a
+[7/12] Linking CXX shared library extension/rekordbox/rekordbox.duckdb_extension
+[8/12] Linking CXX shared library src/libduckdb.dylib
+[9/12] Linking CXX executable test/unittest
+[10/12] Linking CXX executable tools/plan_serializer
+ld: warning: ignoring duplicate libraries: 'src/libduckdb_static.a'
+[11/12] Linking CXX executable duckdb
+ld: warning: ignoring duplicate libraries: 'src/libduckdb_static.a'
+[12/12] repository

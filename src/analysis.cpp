@@ -1,9 +1,20 @@
 #include "analysis.hpp"
 #include "audio_decode.hpp"
 
+#include "duckdb/common/vector/list_vector.hpp"
+#include "duckdb/common/vector/struct_vector.hpp"
+#include "duckdb/common/vector/string_vector.hpp"
+#include "duckdb/common/vector/constant_vector.hpp"
+
 #include <keyfinder/keyfinder.h>
 #include <keyfinder/audiodata.h>
+#include <aubio/aubio.h>
+#include <ebur128.h>
+
 #include <string>
+#include <vector>
+#include <algorithm>
+#include <cmath>
 
 namespace duckdb {
 
@@ -12,7 +23,59 @@ static const char *CAMELOT[25] = {
     "11B","8A","6B","3A","1B","10A","8B","5A","3B","12A","10B","7A","5B",
     "2A","12B","9A","7B","4A","2B","11A","9B","6A","4B","1A",""};
 
-// ---- rb_key: FULLY IMPLEMENTED (ports our kfcli) ------------------------
+//===--------------------------------------------------------------------===//
+// Analysis helpers (each takes already-decoded mono float audio)
+//===--------------------------------------------------------------------===//
+struct TempoResult { double bpm = 0; std::vector<double> beats; };
+
+// aubio tempo: hop through the samples, collect beat times + overall BPM.
+static TempoResult AnalyzeTempo(const rbx::Audio &a) {
+	TempoResult r;
+	if (!a.ok || a.samples.empty()) return r;
+	const uint_t win = 1024, hop = 512;
+	aubio_tempo_t *t = new_aubio_tempo("default", win, hop, (uint_t)a.sample_rate);
+	if (!t) return r;
+	fvec_t *in = new_fvec(hop);
+	fvec_t *out = new_fvec(1);
+	for (size_t pos = 0; pos + hop <= a.samples.size(); pos += hop) {
+		for (uint_t i = 0; i < hop; i++) in->data[i] = a.samples[pos + i];
+		aubio_tempo_do(t, in, out);
+		if (out->data[0] != 0) r.beats.push_back((double)aubio_tempo_get_last_s(t));
+	}
+	r.bpm = (double)aubio_tempo_get_bpm(t);
+	// Fallback: median inter-beat interval if aubio's running estimate is unset.
+	if (r.bpm <= 1.0 && r.beats.size() > 4) {
+		std::vector<double> iv;
+		for (size_t i = 1; i < r.beats.size(); i++) iv.push_back(r.beats[i] - r.beats[i - 1]);
+		std::sort(iv.begin(), iv.end());
+		double med = iv[iv.size() / 2];
+		if (med > 0) r.bpm = 60.0 / med;
+	}
+	del_fvec(in); del_fvec(out); del_aubio_tempo(t);
+	return r;
+}
+
+// libebur128: integrated LUFS, loudness range, and true-peak (dBTP).
+static bool AnalyzeLoudness(const rbx::Audio &a, double &lufs, double &tp, double &lra) {
+	if (!a.ok || a.samples.empty()) return false;
+	ebur128_state *st = ebur128_init(1, (unsigned long)a.sample_rate,
+	    EBUR128_MODE_I | EBUR128_MODE_LRA | EBUR128_MODE_TRUE_PEAK);
+	if (!st) return false;
+	ebur128_add_frames_float(st, a.samples.data(), a.samples.size());
+	ebur128_loudness_global(st, &lufs);
+	ebur128_loudness_range(st, &lra);
+	double peak = 0;
+	ebur128_true_peak(st, 0, &peak);
+	tp = (peak > 0) ? 20.0 * std::log10(peak) : -70.0;
+	ebur128_destroy(&st);
+	return true;
+}
+
+//===--------------------------------------------------------------------===//
+// Scalar UDFs
+//===--------------------------------------------------------------------===//
+
+// rb_key(VARCHAR) -> VARCHAR (Camelot). libKeyFinder.
 void RbKeyFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	UnaryExecutor::Execute<string_t, string_t>(
 	    args.data[0], result, args.size(), [&](string_t path_s) {
@@ -22,8 +85,7 @@ void RbKeyFun(DataChunk &args, ExpressionState &state, Vector &result) {
 		    a.setFrameRate(audio.sample_rate);
 		    a.setChannels(1);
 		    a.addToSampleCount(audio.samples.size());
-		    for (size_t i = 0; i < audio.samples.size(); i++)
-			    a.setSample(i, audio.samples[i]);
+		    for (size_t i = 0; i < audio.samples.size(); i++) a.setSample(i, audio.samples[i]);
 		    KeyFinder::KeyFinder kf;
 		    int idx = (int)kf.keyOfAudio(a);
 		    if (idx < 0 || idx > 24) idx = 24;
@@ -31,53 +93,40 @@ void RbKeyFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	    });
 }
 
-// ---- rb_bpm: TODO wire aubio_tempo over audio.samples -------------------
+// rb_bpm(VARCHAR) -> DOUBLE. aubio tempo.
 void RbBpmFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	UnaryExecutor::Execute<string_t, double>(
 	    args.data[0], result, args.size(), [&](string_t path_s) -> double {
-		    auto audio = rbx::DecodeMono(path_s.GetString(), 44100);
-		    if (!audio.ok) return 0.0;
-		    // TODO: feed audio.samples to aubio's `aubio_tempo` in a hop loop,
-		    // collect beat periods, return the median BPM. (aubio/tempo.h)
-		    return 0.0;
+		    return AnalyzeTempo(rbx::DecodeMono(path_s.GetString(), 44100)).bpm;
 	    });
 }
 
-// ---- rb_beatgrid: TODO aubio beat tracking -> LIST<DOUBLE> --------------
+// rb_beatgrid(VARCHAR) -> DOUBLE[] of beat timestamps (seconds). aubio.
 void RbBeatgridFun(DataChunk &args, ExpressionState &state, Vector &result) {
-	// Pattern: ListVector::PushBack each beat timestamp per row, then set
-	// the list entry (offset,length). Beats come from aubio_tempo's
-	// last_tatum/last_beat outputs over the sample stream.
 	auto count = args.size();
-	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto list_entries = FlatVector::GetData<list_entry_t>(result);
-	auto &child = ListVector::GetEntry(result);
-	idx_t offset = 0;
-	auto paths = FlatVector::GetData<string_t>(args.data[0]);
 	for (idx_t r = 0; r < count; r++) {
-		std::vector<double> beats; // TODO: aubio beat times for paths[r]
-		for (double b : beats) {
-			ListVector::PushBack(result, Value::DOUBLE(b));
+		Value pv = args.data[0].GetValue(r);
+		vector<Value> beats;
+		if (!pv.IsNull()) {
+			for (double b : AnalyzeTempo(rbx::DecodeMono(pv.ToString(), 44100)).beats)
+				beats.push_back(Value::DOUBLE(b));
 		}
-		list_entries[r].offset = offset;
-		list_entries[r].length = beats.size();
-		offset += beats.size();
+		result.SetValue(r, Value::LIST(LogicalType::DOUBLE, std::move(beats)));
 	}
-	(void)child;
 }
 
-// ---- rb_loudness: TODO libebur128 -> STRUCT(lufs,true_peak,lra) ---------
+// rb_loudness(VARCHAR) -> STRUCT(lufs, true_peak, lra). libebur128.
 void RbLoudnessFun(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &children = StructVector::GetEntries(result);
-	auto lufs = FlatVector::GetData<double>(*children[0]);
-	auto tp = FlatVector::GetData<double>(*children[1]);
-	auto lra = FlatVector::GetData<double>(*children[2]);
-	auto paths = FlatVector::GetData<string_t>(args.data[0]);
-	for (idx_t r = 0; r < args.size(); r++) {
-		// TODO: ebur128_add_frames_float over audio.samples;
-		// ebur128_loudness_global / _loudness_range / true-peak.
-		(void)paths;
-		lufs[r] = 0.0; tp[r] = 0.0; lra[r] = 0.0;
+	auto count = args.size();
+	for (idx_t r = 0; r < count; r++) {
+		Value pv = args.data[0].GetValue(r);
+		double lufs = -70, tp = -70, lra = 0;
+		if (!pv.IsNull()) AnalyzeLoudness(rbx::DecodeMono(pv.ToString(), 44100), lufs, tp, lra);
+		child_list_t<Value> fields;
+		fields.emplace_back("lufs", Value::DOUBLE(lufs));
+		fields.emplace_back("true_peak", Value::DOUBLE(tp));
+		fields.emplace_back("lra", Value::DOUBLE(lra));
+		result.SetValue(r, Value::STRUCT(std::move(fields)));
 	}
 }
 

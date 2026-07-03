@@ -93,6 +93,11 @@ static void RbSink(ExecutionContext &, FunctionData &, GlobalFunctionData &gstat
 	}
 }
 
+// No per-thread local buffering yet: all rows accumulate in the global state,
+// so combine is a no-op (required by the copy machinery).
+static void RbCombine(ExecutionContext &, FunctionData &, GlobalFunctionData &,
+                      LocalFunctionData &) {}
+
 static void RbFinalize(ClientContext &, FunctionData &, GlobalFunctionData &gstate) {
 	auto &gs = gstate.Cast<RbGlobalState>();
 	// mkdir -p usb_root/PIONEER/{rekordbox,USBANLZ}
@@ -113,6 +118,7 @@ CopyFunction RekordboxCopyFunction::Get() {
 	f.copy_to_initialize_global = RbInitGlobal;
 	f.copy_to_initialize_local = RbInitLocal;
 	f.copy_to_sink = RbSink;
+	f.copy_to_combine = RbCombine;
 	f.copy_to_finalize = RbFinalize;
 	f.extension = "pdb";
 	return f;
