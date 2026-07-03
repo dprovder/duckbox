@@ -1,0 +1,4 @@
+{
+  "$comment": "No vcpkg deps: FFmpeg + libKeyFinder + aubio come from Homebrew (see CMakeLists.txt). Essentia is an optional source build (-DWITH_ESSENTIA=ON).",
+  "dependencies": []
+}

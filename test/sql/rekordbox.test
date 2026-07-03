@@ -1,0 +1,27 @@
+# name: test/sql/rekordbox.test
+# description: smoke tests for the rekordbox extension
+# group: [rekordbox]
+
+require rekordbox
+
+# rb_key is implemented (libKeyFinder). Expect a Camelot code for a real file.
+query I
+SELECT rb_key('test/data/sample.m4a') SIMILAR TO '[0-9]+[AB]';
+----
+true
+
+# analysis + export round-trip: analyze a folder, write a USB tree.
+statement ok
+CREATE TABLE lib AS
+SELECT file AS path,
+       rb_bpm(file)      AS bpm,
+       rb_key(file)      AS key,
+       rb_beatgrid(file) AS beats
+FROM glob('test/data/*.m4a');
+
+statement ok
+COPY lib TO '__TEST_DIR__/USB' (FORMAT rekordbox);
+
+# the exporter should have produced the Pioneer database
+statement ok
+SELECT * FROM read_blob('__TEST_DIR__/USB/PIONEER/rekordbox/export.pdb');

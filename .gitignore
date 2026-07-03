@@ -1,0 +1,2 @@
+build/
+*.duckdb_extension
