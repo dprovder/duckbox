@@ -154,7 +154,7 @@ std::string BuildColorPreview(const std::vector<uint8_t> &h, const std::vector<u
 	BE body;
 	body.u4(6);
 	body.u4((uint32_t)COLS);
-	body.u4(0x00960000);
+	body.u4(0x00000000); // PWV4 third word is 0 (verified vs real rekordbox .EXT)
 	for (int c = 0; c < COLS; c++) {
 		double L = RangeMean(lo, c, COLS), M = RangeMean(mi, c, COLS), H = RangeMean(hi, c, COLS);
 		auto b127to255 = [](double v) { return (uint8_t)std::clamp((int)std::lround(v * 2.0), 0, 255); };
@@ -188,19 +188,19 @@ std::string BuildColorDetail(const std::vector<uint8_t> &h, const std::vector<ui
 	return body.b;
 }
 
-// PVBR: best-effort seek index. Format (per ksy): u4 + 400 * u4. The exact
-// meaning is not reverse-engineered; we write monotonically increasing byte
-// offsets across the file so the structure is well-formed. NEEDS hardware
-// validation; only VBR MP3 relies on it (our AAC seeks via the container).
-std::string BuildVbr(const std::string &path) {
-	uint64_t size = 0;
-	struct stat st;
-	if (stat(path.c_str(), &st) == 0) size = (uint64_t)st.st_size;
+// PVBR: seek index. Real rekordbox exports carry a 1608-byte body (402 u4 words)
+// and it is entirely ZERO for the reference demo track — so we match that exactly
+// (the tag isn't fully reverse-engineered, and AAC seeks via the MP4 container).
+std::string BuildVbr(const std::string &) {
 	BE body;
-	body.u4(0);
-	for (int i = 0; i < 400; i++) body.u4((uint32_t)(size * i / 400));
+	for (int i = 0; i < 402; i++) body.u4(0);
 	return body.b;
 }
+
+// Empty cue lists, matching real exports: PCOB (type,u4=0,0xffffffff) for the
+// .DAT/.EXT ordinary+hot lists, PCO2 (type,u4=0) for the .EXT extended lists.
+std::string BuildCue(uint32_t type) { BE b; b.u4(type); b.u4(0); b.u4(0xffffffff); return b.b; }
+std::string BuildCue2(uint32_t type) { BE b; b.u4(type); b.u4(0); return b.b; }
 
 } // namespace
 
@@ -210,12 +210,15 @@ std::string BuildVbr(const std::string &path) {
 std::string BuildAnlzDatBytes(const std::string &path, const std::vector<double> &beats, double bpm,
                               int downbeat, const std::vector<uint8_t> &h, const std::vector<uint8_t> &lo,
                               const std::vector<uint8_t> &mi, const std::vector<uint8_t> &hi) {
+	// Tag order matches a real rekordbox export.
 	BE sec;
 	PutTag(sec, "PPTH", 0x10, BuildPath(path));
+	PutTag(sec, "PVBR", 0x10, BuildVbr(path));
 	PutTag(sec, "PQTZ", 0x18, BuildBeatGrid(beats, bpm, downbeat));
 	PutTag(sec, "PWAV", 0x14, BuildMonoPreview(h, lo, mi, hi, 400, 5));
 	PutTag(sec, "PWV2", 0x14, BuildMonoPreview(h, lo, mi, hi, 100, 4));
-	PutTag(sec, "PVBR", 0x10, BuildVbr(path));
+	PutTag(sec, "PCOB", 0x18, BuildCue(1)); // hot cues (empty)
+	PutTag(sec, "PCOB", 0x18, BuildCue(0)); // memory cues (empty)
 	return Frame(sec.b);
 }
 
@@ -225,8 +228,12 @@ std::string BuildAnlzExtBytes(const std::string &path, const std::vector<uint8_t
 	BE sec;
 	PutTag(sec, "PPTH", 0x10, BuildPath(path));
 	PutTag(sec, "PWV3", 0x18, BuildMonoDetail(h, lo, mi, hi));
-	PutTag(sec, "PWV4", 0x18, BuildColorPreview(h, lo, mi, hi));
+	PutTag(sec, "PCOB", 0x18, BuildCue(1));
+	PutTag(sec, "PCOB", 0x18, BuildCue(0));
+	PutTag(sec, "PCO2", 0x14, BuildCue2(1));
+	PutTag(sec, "PCO2", 0x14, BuildCue2(0));
 	PutTag(sec, "PWV5", 0x18, BuildColorDetail(h, lo, mi, hi));
+	PutTag(sec, "PWV4", 0x18, BuildColorPreview(h, lo, mi, hi));
 	return Frame(sec.b);
 }
 
