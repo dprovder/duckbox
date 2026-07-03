@@ -179,9 +179,10 @@ std::string BuildColorDetail(const std::vector<uint8_t> &h, const std::vector<ui
 	body.u4(0x00960305);
 	auto to3 = [](uint8_t v) { return (uint16_t)std::clamp((int)std::lround(v / 127.0 * 7.0), 0, 7); };
 	for (int c = 0; c < n; c++) {
-		uint16_t red = to3(hi[c]);   // high freq  -> red/white
-		uint16_t grn = to3(mi[c]);   // mid  freq  -> green
-		uint16_t blu = to3(lo[c]);   // low  freq  -> blue
+		// rekordbox maps red<-low/bass, blue<-high (verified vs test/reference/).
+		uint16_t red = to3(lo[c]);
+		uint16_t grn = to3(mi[c]);
+		uint16_t blu = to3(hi[c]);
 		uint16_t hgt = std::min<int>(h[c], 31);
 		body.u2((uint16_t)((red << 13) | (grn << 10) | (blu << 7) | (hgt << 2)));
 	}

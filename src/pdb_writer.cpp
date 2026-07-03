@@ -39,7 +39,8 @@ struct RbTrack {
 	std::vector<uint8_t> wf_height, wf_low, wf_mid, wf_high;
 	// assigned during build:
 	uint32_t id = 0, artist_id = 0, album_id = 0, genre_id = 0, label_id = 0, key_id = 0, color_id = 0;
-	std::string analyze_path;
+	std::string analyze_path;  // /PIONEER/USBANLZ/Pxxx/xxxxxxxx/ANLZ0000.DAT
+	std::string content_path;  // /Contents/<file> — USB-relative audio path (file_path in the pdb)
 };
 
 struct RbGlobalState : public GlobalFunctionData {
@@ -144,7 +145,7 @@ std::string TrackRow(const RbTrack &t) {
 	strs[15] = "";               // analyze_date
 	strs[17] = t.title;          // title
 	strs[19] = t.filename;       // filename
-	strs[20] = t.file_path;      // file_path
+	strs[20] = t.content_path;   // file_path — the USB-relative /Contents/ path
 
 	std::string blob;
 	uint16_t ofs[21];
@@ -271,6 +272,7 @@ std::string BuildPdb(std::vector<RbTrack> &tracks) {
 		char buf[80];
 		std::snprintf(buf, sizeof(buf), "/PIONEER/USBANLZ/P%03u/%08X/ANLZ0000.DAT", t.id % 1000, t.id);
 		t.analyze_path = buf;
+		t.content_path = "/Contents/" + t.filename;
 	}
 
 	// Table rows (20 tables, type == index).
@@ -454,18 +456,25 @@ static void RbFinalize(ClientContext &, FunctionData &, GlobalFunctionData &gsta
 	std::string pdb = BuildPdb(gs.tracks);
 	std::ofstream out(fs::path(gs.usb_root) / "PIONEER" / "rekordbox" / "export.pdb", std::ios::binary);
 	out.write(pdb.data(), (std::streamsize)pdb.size());
-	// ANLZ .DAT (+ .EXT) per track, written where analyze_path points.
 	for (auto &t : gs.tracks) {
+		std::error_code ec;
+		// 1. Copy the audio onto the USB under /Contents (what file_path now points at).
+		if (!t.file_path.empty()) {
+			auto dst = fs::path(gs.usb_root) / "Contents" / t.filename;
+			fs::create_directories(dst.parent_path(), ec);
+			fs::copy_file(t.file_path, dst, fs::copy_options::overwrite_existing, ec);
+		}
+		// 2. ANLZ .DAT (+ .EXT) where analyze_path points; PPTH = the /Contents/ path.
 		char dir[80];
 		std::snprintf(dir, sizeof(dir), "PIONEER/USBANLZ/P%03u/%08X", t.id % 1000, t.id);
 		auto d = fs::path(gs.usb_root) / dir;
-		fs::create_directories(d);
-		if (t.beats.empty()) continue; // no analysis provided -> pdb only
-		std::string dat = BuildAnlzDatBytes(t.file_path, t.beats, t.bpm, t.downbeat,
+		fs::create_directories(d, ec);
+		if (t.beats.empty()) continue; // no analysis provided -> pdb + audio only
+		std::string dat = BuildAnlzDatBytes(t.content_path, t.beats, t.bpm, t.downbeat,
 		                                    t.wf_height, t.wf_low, t.wf_mid, t.wf_high);
 		std::ofstream(d / "ANLZ0000.DAT", std::ios::binary).write(dat.data(), (std::streamsize)dat.size());
 		if (!t.wf_height.empty()) {
-			std::string ext = BuildAnlzExtBytes(t.file_path, t.wf_height, t.wf_low, t.wf_mid, t.wf_high);
+			std::string ext = BuildAnlzExtBytes(t.content_path, t.wf_height, t.wf_low, t.wf_mid, t.wf_high);
 			std::ofstream(d / "ANLZ0000.EXT", std::ios::binary).write(ext.data(), (std::streamsize)ext.size());
 		}
 	}

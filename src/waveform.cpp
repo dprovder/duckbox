@@ -83,16 +83,16 @@ Waveform ComputeWaveform(const rbx::Audio &a) {
 		return std::sqrt(acc / std::max<size_t>(1, hi - lo));
 	};
 
-	// Gain knobs (calibration): amplitude ~[0,1] -> height 0..31, band RMS -> 0..127.
-	const double H_GAIN = 31.0 * 1.4, B_GAIN = 127.0 * 3.0;
+	// Gain knobs, calibrated against a real rekordbox export (test/reference/):
+	// height is RMS-based (peak saturates loud music — real waveforms keep large
+	// headroom, median ~4/31), band energies feed the colour channels.
+	const double H_GAIN = 31.0 / 0.7, B_GAIN = 127.0 * 3.0;
 	size_t n = s.size();
 	for (int c = 0; c < cols; c++) {
 		size_t lo = (size_t)((uint64_t)c * n / cols);
 		size_t hi = (size_t)((uint64_t)(c + 1) * n / cols);
 		if (hi <= lo) hi = std::min(n, lo + 1);
-		float peak = 0;
-		for (size_t i = lo; i < hi; i++) peak = std::max(peak, std::fabs(s[i]));
-		w.height.push_back(Clamp(peak * H_GAIN, 31));
+		w.height.push_back(Clamp(rms(s, lo, hi) * H_GAIN, 31));
 		w.low.push_back(Clamp(rms(lowsig, lo, hi) * B_GAIN, 127));
 		w.mid.push_back(Clamp(rms(midsig, lo, hi) * B_GAIN, 127));
 		w.high.push_back(Clamp(rms(highsig, lo, hi) * B_GAIN, 127));
