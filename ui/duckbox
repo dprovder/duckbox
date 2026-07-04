@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# duckbox — launch the DuckDB-only DJ library UI.
+#
+# No Python, no other server: the DuckDB binary (with the compiled-in httpserver
+# extension) serves both the app page and every byte of data over HTTP.
+#
+#   ext-rekordbox/ui/duckbox [store.duckdb]   # store defaults to ../../library.duckdb
+#   PORT=9001 ext-rekordbox/ui/duckbox        # override the port (default 9999)
+#
+# Ctrl-C stops the server.
+set -euo pipefail
+
+# this script lives in ext-rekordbox/ui/ ; EXT = ext-rekordbox
+EXT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DUCK="$EXT/build/release/duckdb"
+APP="$EXT/ui/app.html"
+STORE="${1:-$EXT/../library.duckdb}"
+HOST="127.0.0.1"
+PORT="${PORT:-9999}"
+
+[ -x "$DUCK" ] || { echo "✗ duckdb binary not found: $DUCK (build it: cd ext-rekordbox && GEN=ninja make release EXT_FLAGS=-DWITH_ESSENTIA=ON)"; exit 1; }
+[ -f "$STORE" ] || { echo "✗ store not found: $STORE"; exit 1; }
+[ -f "$APP" ]   || { echo "✗ app not found: $APP"; exit 1; }
+
+# free the port if a previous instance is lingering
+lsof -ti "tcp:$PORT" 2>/dev/null | xargs kill 2>/dev/null || true
+
+URL="http://$HOST:$PORT/"
+echo "🦆 duckbox  →  $URL"
+echo "   store: $STORE"
+echo "   (Ctrl-C to stop)"
+
+# open the browser once the server is up
+( for _ in $(seq 1 40); do curl -s -m1 "http://$HOST:$PORT/ping" >/dev/null 2>&1 && break; sleep 0.25; done
+  command -v open >/dev/null 2>&1 && open "$URL" ) &
+
+export QUERY_FARM_TELEMETRY_OPT_OUT=1     # no phone-home
+export DUCKDB_HTTPSERVER_FOREGROUND=1     # keep the process alive serving
+export DUCKDB_HTTPSERVER_INDEX="$APP"     # GET / serves the app, not the SQL playground
+exec "$DUCK" "$STORE" -c "SELECT httpserve_start('$HOST', $PORT, '')"
