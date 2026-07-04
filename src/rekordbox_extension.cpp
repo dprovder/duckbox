@@ -5,13 +5,29 @@
 #include "waveform.hpp"
 #include "anlz_writer.hpp"
 #include "pdb_writer.hpp"
+#include "audio_decode.hpp"
 
 #include "duckdb.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 
 namespace duckdb {
 
+// rb_artwork(VARCHAR path) -> BLOB : the embedded cover art bytes, NULL if none.
+static void RbArtworkFun(DataChunk &args, ExpressionState &state, Vector &result) {
+	UnaryExecutor::Execute<string_t, string_t>(
+	    args.data[0], result, args.size(), [&](string_t path) {
+		    auto bytes = rbx::ExtractArtwork(path.GetString());
+		    if (bytes.empty()) {
+			    return StringVector::AddStringOrBlob(result, "", 0);
+		    }
+		    return StringVector::AddStringOrBlob(result, (const char *)bytes.data(), bytes.size());
+	    });
+}
+
 static void LoadInternal(ExtensionLoader &loader) {
+	loader.RegisterFunction(
+	    ScalarFunction("rb_artwork", {LogicalType::VARCHAR}, LogicalType::BLOB, RbArtworkFun));
+
 	// ---- analysis scalar UDFs (decode + analyze a file path) ----
 	loader.RegisterFunction(
 	    ScalarFunction("rb_bpm", {LogicalType::VARCHAR}, LogicalType::DOUBLE, RbBpmFun));

@@ -62,4 +62,27 @@ Audio DecodeMono(const std::string &path, int target_rate) {
 	return out;
 }
 
+// Return the raw bytes of the embedded cover art (the attached-picture stream),
+// or empty if there is none. attached_pic is a pre-populated AVPacket on the stream.
+std::vector<uint8_t> ExtractArtwork(const std::string &path) {
+	std::vector<uint8_t> out;
+	AVFormatContext *fmt = nullptr;
+	if (avformat_open_input(&fmt, path.c_str(), nullptr, nullptr) < 0) {
+		return out;
+	}
+	avformat_find_stream_info(fmt, nullptr);
+	for (unsigned i = 0; i < fmt->nb_streams; i++) {
+		AVStream *st = fmt->streams[i];
+		if (st->disposition & AV_DISPOSITION_ATTACHED_PIC) {
+			const AVPacket &pic = st->attached_pic;
+			if (pic.data && pic.size > 0) {
+				out.assign(pic.data, pic.data + pic.size);
+			}
+			break;
+		}
+	}
+	avformat_close_input(&fmt);
+	return out;
+}
+
 } // namespace rbx

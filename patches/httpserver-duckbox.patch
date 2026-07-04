@@ -1,0 +1,151 @@
+diff --git a/duckdb b/duckdb
+deleted file mode 160000
+index 7d45b33..0000000
+--- a/duckdb
++++ /dev/null
+@@ -1 +0,0 @@
+-Subproject commit 7d45b33a308f787d7e09346ee76ea403bd140da5
+diff --git a/duckdb b/duckdb
+new file mode 120000
+index 0000000..b04f525
+--- /dev/null
++++ b/duckdb
+@@ -0,0 +1 @@
++../../ext-rekordbox/duckdb
+\ No newline at end of file
+diff --git a/src/httpserver_extension.cpp b/src/httpserver_extension.cpp
+index d903b8c..8a62837 100644
+--- a/src/httpserver_extension.cpp
++++ b/src/httpserver_extension.cpp
+@@ -4,6 +4,8 @@
+ #include <chrono>
+ #include <cstdlib>
+ #include <thread>
++#include <fstream>
++#include <sstream>
+ #include "httpserver_extension.hpp"
+ #include "query_stats.hpp"
+ #include "duckdb.hpp"
+@@ -300,10 +302,24 @@ namespace duckdb
+ 		{
+ 			query = req.body;
+ 		}
+-		// If no query found, return an error
++		// If no query found: serve the configured app page (env
++		// DUCKDB_HTTPSERVER_INDEX) if set, else the built-in playground. This lets
++		// DuckDB itself serve a single-page app same-origin with its data.
+ 		else
+ 		{
+ 			res.status = 200;
++			const char *index_path = std::getenv("DUCKDB_HTTPSERVER_INDEX");
++			if (index_path && index_path[0])
++			{
++				std::ifstream f(index_path, std::ios::binary);
++				if (f)
++				{
++					std::stringstream ss;
++					ss << f.rdbuf();
++					res.set_content(ss.str(), "text/html");
++					return;
++				}
++			}
+ 			res.set_content(reinterpret_cast<char const *>(playgroundContent), "text/html");
+ 			return;
+ 		}
+@@ -386,7 +402,7 @@ namespace duckdb
+ 		}
+ 	}
+ 
+-	void HttpServerStart(shared_ptr<DatabaseInstance> db, string_t host, int32_t port, string_t auth = string_t())
++	void HttpServerStart(shared_ptr<DatabaseInstance> db, string_t host, int32_t port, const std::string &auth = std::string())
+ 	{
+ 		if (global_state.is_running)
+ 		{
+@@ -396,7 +412,7 @@ namespace duckdb
+ 		global_state.db_instance = db;
+ 		global_state.server = make_uniq<duckdb_httplib_openssl::Server>();
+ 		global_state.is_running = true;
+-		global_state.auth_token = auth.GetString();
++		global_state.auth_token = auth;
+ 
+ 		// Custom basepath, defaults to root /
+ 		const char *base_path_env = std::getenv("DUCKDB_HTTPSERVER_BASEPATH");
+@@ -444,6 +460,18 @@ namespace duckdb
+ 															 res.set_content("OK", "text/plain");
+ 														 });
+ 
++		// Serve local audio files for the UI player (localhost only): GET /media/<abs path>
++		// -> file at /<abs path>. httplib handles Range requests so the <audio> element
++		// can seek. Only reachable from the same-origin app on 127.0.0.1.
++		global_state.server->set_mount_point("/media", "/");
++		for (auto &m : {std::pair<const char *, const char *>{"m4a", "audio/mp4"},
++		                {"mp3", "audio/mpeg"}, {"flac", "audio/flac"}, {"wav", "audio/wav"},
++		                {"aiff", "audio/aiff"}, {"aif", "audio/aiff"}, {"ogg", "audio/ogg"},
++		                {"opus", "audio/ogg"}})
++		{
++			global_state.server->set_file_extension_and_mimetype_mapping(m.first, m.second);
++		}
++
+ 		string host_str = host.GetString();
+ 
+ #ifndef _WIN32
+@@ -580,21 +608,25 @@ namespace duckdb
+ 
+ 	static void LoadInternal(ExtensionLoader &loader)
+ 	{
++		// Capture the long-lived DatabaseInstance by value (shared_ptr). The
++		// ExtensionLoader is only valid during load, so it must NOT be captured by
++		// reference into a scalar function that runs later at query time.
++		auto db_ptr = loader.GetDatabaseInstance().shared_from_this();
+ 		auto httpserve_start = ScalarFunction(
+ 				"httpserve_start", {LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::VARCHAR}, LogicalType::VARCHAR,
+-				[&](DataChunk &args, ExpressionState &state, Vector &result)
++				[db_ptr](DataChunk &args, ExpressionState &state, Vector &result)
+ 				{
+-					auto &host_vector = args.data[0];
+-					auto &port_vector = args.data[1];
+-					auto &auth_vector = args.data[2];
+-
+-					UnaryExecutor::Execute<string_t, string_t>(host_vector, result, args.size(), [&](string_t host)
+-																										 {
+-			    auto port = ((int32_t *)port_vector.GetData())[0];
+-			    auto auth = ((string_t *)auth_vector.GetData())[0];
+-			    HttpServerStart(loader.GetDatabaseInstance().shared_from_this(), host, port, auth);
+-			    return StringVector::AddString(result, "HTTP server started on " + host.GetString() + ":" +
+-			                                               std::to_string(port)); });
++					// Constant scalar args — read them directly. (UnaryExecutor over the
++					// input vector null-derefs on a constant string arg in this DuckDB.)
++					std::string host = args.data[0].GetValue(0).ToString();
++					auto port = args.data[1].GetValue(0).GetValue<int32_t>();
++					auto auth_val = args.data[2].GetValue(0);
++					std::string auth = auth_val.IsNull() ? std::string() : auth_val.ToString();
++
++					HttpServerStart(db_ptr, string_t(host.c_str(), (uint32_t)host.size()), port, auth);
++
++					result.SetVectorType(VectorType::CONSTANT_VECTOR);
++					result.SetValue(0, Value("HTTP server started on " + host + ":" + std::to_string(port)));
+ 				});
+ 
+ 		auto httpserve_stop = ScalarFunction("httpserve_stop", {}, LogicalType::VARCHAR,
+diff --git a/src/result_serializer.cpp b/src/result_serializer.cpp
+index 35bffd2..c476649 100644
+--- a/src/result_serializer.cpp
++++ b/src/result_serializer.cpp
+@@ -203,7 +203,7 @@ void ResultSerializer::SerializeValue( // NOLINT(*-no-recursion)
+ 		} else {
+ 			val = yyjson_mut_obj(doc);
+ 			for (uint64_t idx = 0; idx < children.size(); ++idx) {
+-				string struct_name = type_info.child_types[idx].first;
++				string struct_name = type_info.child_types[idx].first.GetIdentifierName();
+ 				SerializeValue(val, children[idx], struct_name, type_info.child_types[idx].second);
+ 			}
+ 		}
+@@ -227,7 +227,7 @@ void ResultSerializer::SerializeValue( // NOLINT(*-no-recursion)
+ 	case LogicalTypeId::TABLE:
+ 	case LogicalTypeId::POINTER:
+ 	case LogicalTypeId::VALIDITY:
+-	case LogicalTypeId::AGGREGATE_STATE:
++	case LogicalTypeId::LEGACY_AGGREGATE_STATE:
+ 	case LogicalTypeId::LAMBDA:
+ 	case LogicalTypeId::ANY:
+ 	case LogicalTypeId::UNKNOWN:

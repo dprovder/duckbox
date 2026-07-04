@@ -19,4 +19,8 @@ struct Audio {
 // but in-process via libav* so the extension is self-contained.
 Audio DecodeMono(const std::string &path, int target_rate = 44100);
 
+// Extract the embedded cover art (attached picture) from a media file, as the
+// raw encoded image bytes (JPEG/PNG). Empty if the file has no artwork.
+std::vector<uint8_t> ExtractArtwork(const std::string &path);
+
 } // namespace rbx
