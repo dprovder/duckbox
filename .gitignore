@@ -4,3 +4,6 @@ build/
 # build logs, editor cache
 *.log
 .cache/
+
+# macOS
+.DS_Store
