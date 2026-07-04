@@ -934,7 +934,7 @@ async function reanalyzeTrack(pos){
         beats=r.beats, beat_loudness=r.beat_loudness, kick_pattern=r.kick_pattern
       FROM rb_analyze_dir(${sqlStr(path)}) r WHERE t.pos=${sqlStr(pos)}`);
     await duck(`DELETE FROM waveform WHERE pos=${sqlStr(pos)};
-      INSERT INTO waveform SELECT pos,(rb_waveform(path)).* FROM track_analysis WHERE pos=${sqlStr(pos)}`);
+      INSERT INTO waveform SELECT pos, w.* FROM (SELECT pos, rb_waveform(path) AS w FROM track_analysis WHERE pos=${sqlStr(pos)})`);
     toast('Re-analyzed ✓'); showDetail(pos); load();
   }catch(e){ toast('Reanalyze failed: '+e.message,true); if(btn)btn.textContent='↻'; }
 }
@@ -1349,8 +1349,8 @@ function wireModals(){
                t.* EXCLUDE(pos)
         FROM rb_analyze_dir(${sqlStr(folder)}) t
         WHERE t.filename NOT IN (SELECT filename FROM track_analysis)`);
-      await duck(`INSERT INTO waveform SELECT pos, (rb_waveform(path)).*
-        FROM track_analysis WHERE pos NOT IN (SELECT pos FROM waveform)`);
+      await duck(`INSERT INTO waveform SELECT pos, w.* FROM
+        (SELECT pos, rb_waveform(path) AS w FROM track_analysis WHERE pos NOT IN (SELECT pos FROM waveform))`);
       const after=(await duck1('SELECT count(*) n FROM track_analysis')).n;
       log.textContent+=`✓ Added ${after-before} new track(s). Library now ${after}.`;
       toast(`Analyzed +${after-before} tracks ✓`);
@@ -1410,7 +1410,7 @@ async function reanalyzeSelected(){
           beats=x.beats, beat_loudness=x.beat_loudness, kick_pattern=x.kick_pattern
         FROM rb_analyze_dir(${sqlStr(r.path)}) x WHERE t.pos=${sqlStr(r.pos)};
         DELETE FROM waveform WHERE pos=${sqlStr(r.pos)};
-        INSERT INTO waveform SELECT pos,(rb_waveform(path)).* FROM track_analysis WHERE pos=${sqlStr(r.pos)}`);
+        INSERT INTO waveform SELECT pos, w.* FROM (SELECT pos, rb_waveform(path) AS w FROM track_analysis WHERE pos=${sqlStr(r.pos)})`);
       log.textContent+='✓\n';
     }catch(e){ log.textContent+='✗ '+e.message+'\n'; }
     log.scrollTop=log.scrollHeight;
