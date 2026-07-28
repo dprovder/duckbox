@@ -25,6 +25,8 @@
 #include <string>
 #include <vector>
 
+#include "pdb_static_tables.inc"  // track-independent tables (columns/colors/…)
+
 namespace duckdb {
 
 struct RbTrack {
@@ -345,6 +347,17 @@ std::string BuildPdb(std::vector<RbTrack> &tracks,
 		std::sort(ents.begin(), ents.end());
 		uint32_t idx = 1;
 		for (auto &e : ents) tabs[8].rows.push_back(PlaylistEntryRow(idx++, e.second, kv.first));
+	}
+
+	// Track-independent metadata tables the CDJ firmware needs for browsing
+	// (columns/menu, colors, and two undocumented tables + a history header),
+	// lifted verbatim from a real rekordbox export.
+	for (auto &st : STATIC_TABS) {
+		int off = 0;
+		for (int i = 0; i < st.n; i++) {
+			tabs[st.type].rows.push_back(std::string((const char *)st.data + off, (size_t)st.lens[i]));
+			off += st.lens[i];
+		}
 	}
 
 	// Pass 1: pack each table into pages and assign global indices (page 0 = header).
