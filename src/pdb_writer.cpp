@@ -290,7 +290,12 @@ std::string EmitStrangePage(uint32_t page_index, uint32_t type, uint32_t next_pa
 	put(0x20, 0x1fff, 2);
 	put(0x22, 0x1fff, 2);   // num_rows_large = sentinel
 	put(0x24, 0x03ec, 2);
-	put(0x26, 1, 2);
+	put(0x26, 0, 2);
+	// Real rekordbox writes the strange (index) page's own page index as a u2 at
+	// the start of its heap (@0x28). The firmware reads each table's index page
+	// first; a 0 here (instead of the page index) breaks navigation into the table
+	// so nothing browses, even though the data pages are perfectly valid.
+	put(HEAP, page_index, 2);
 	return page;
 }
 
