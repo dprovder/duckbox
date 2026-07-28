@@ -112,7 +112,7 @@ std::string TrackRow(const RbTrack &t) {
 	h.u2(0x24);                        // 00 subtype
 	h.u2(0);                           // 02 index_shift
 	h.u4(0);                           // 04 bitmask
-	h.u4((uint32_t)t.sample_rate);     // 08 sample_rate
+	h.u4(t.sample_rate ? (uint32_t)t.sample_rate : 44100); // 08 sample_rate (rekordbox never writes 0)
 	h.u4(0);                           // 0c composer_id
 	h.u4((uint32_t)t.file_size);       // 10 file_size
 	h.u4(0);                           // 14 u2
@@ -146,8 +146,9 @@ std::string TrackRow(const RbTrack &t) {
 	for (auto &s : strs) s = ""; // default empty
 	strs[6] = "ON";              // publish/kuvo
 	strs[7] = "ON";              // autoload_hot_cues
+	strs[10] = "2025-01-01";     // date_added (rekordbox always writes a YYYY-MM-DD)
 	strs[14] = t.analyze_path;   // analyze_path
-	strs[15] = "";               // analyze_date
+	strs[15] = "2025-01-01";     // analyze_date
 	strs[17] = t.title;          // title
 	strs[19] = t.filename;       // filename
 	strs[20] = t.content_path;   // file_path — the USB-relative /Contents/ path
@@ -235,11 +236,23 @@ std::string EmitPage(uint32_t page_index, uint32_t type, uint32_t next_page, uin
 	// heap + offsets
 	uint32_t heap = HEAP;
 	std::vector<uint16_t> offs;
+	// Rows of the "big" types (tracks/artists/albums) begin with a u2 subtype and
+	// a u2 index_shift = (row's slot in this page's row index) << 5. Real rekordbox
+	// sets it per row; the firmware uses it to enumerate the table, so leaving it 0
+	// on every row makes the whole table read as empty on the player.
+	bool has_index_shift = (type == 0 || type == 2 || type == 3);
+	uint32_t slot = 0;
 	for (int id : row_ids) {
 		offs.push_back((uint16_t)(heap - HEAP));
 		const std::string &body = rows[id];
 		for (size_t k = 0; k < body.size(); k++) page[heap + k] = body[k];
+		if (has_index_shift) {
+			uint16_t ish = (uint16_t)(slot << 5);
+			page[heap + 2] = (char)(ish & 0xff);
+			page[heap + 3] = (char)((ish >> 8) & 0xff);
+		}
 		heap += (uint32_t)body.size();
+		slot++;
 	}
 	uint32_t used = heap - HEAP;
 	uint32_t groups = (r + 15) / 16;
