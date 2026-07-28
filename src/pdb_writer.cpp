@@ -250,7 +250,8 @@ std::string EmitPage(uint32_t page_index, uint32_t type, uint32_t next_page, uin
 				present |= (1u << j);
 			}
 		}
-		put(base - 4, present, 2);
+		put(base - 4, present, 2); // row-presence bitmap
+		put(base - 2, present, 2); // real rekordbox duplicates it in the trailing u16
 	}
 	return page;
 }
