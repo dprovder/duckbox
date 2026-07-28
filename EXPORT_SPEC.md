@@ -134,7 +134,10 @@ the byte layouts above (validate against `test/reference/ANLZ0000.EXT`).
 
 ---
 
-## 3. Named playlists — pdb `playlist_tree` + `playlist_entries`  🟡
+## 3. Named playlists — pdb `playlist_tree` + `playlist_entries`  ✅ DONE
+
+Implemented: user playlists ride along as a per-track `playlists LIST(STRUCT(name,sort))` column; `BuildPdb` builds `playlist_tree` (root-level, ids 2..N) + `playlist_entries` from the union. "All Tracks" kept. Original design below.
+
 
 `tabs[7]` (playlist_tree) and `tabs[8]` (playlist_entries) already exist with one
 "All Tracks" row. Extend to write the user's playlists.

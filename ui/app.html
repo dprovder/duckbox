@@ -1326,7 +1326,7 @@ function wireModals(){
     // join each track's saved cues (as a LIST(STRUCT) the export sink reads) so
     // they land in the ANLZ PCOB/PCO2 tags.
     const sql=`COPY (
-      SELECT d.*, c.cues
+      SELECT d.*, c.cues, rb_artwork(d.path) AS art, pl.pls AS playlists
       FROM rb_deck d
       LEFT JOIN (
         SELECT ta.filename AS fn,
@@ -1334,6 +1334,12 @@ function wireModals(){
                                 comment := coalesce(cu.comment,'')) ORDER BY cu.time_ms) AS cues
         FROM cues cu JOIN track_analysis ta USING(pos) GROUP BY ta.filename
       ) c ON c.fn = d.filename
+      LEFT JOIN (
+        SELECT ta.filename AS fn,
+               list(struct_pack(name := p.name, sort := pt.sort) ORDER BY pt.sort) AS pls
+        FROM playlist_tracks pt JOIN playlists p ON p.id = pt.playlist_id
+        JOIN track_analysis ta USING(pos) GROUP BY ta.filename
+      ) pl ON pl.fn = d.filename
       WHERE d.filename IN (SELECT filename FROM track_analysis WHERE pos IN (${list}))
     ) TO ${sqlStr(dest)} (FORMAT rekordbox)`;
     try{

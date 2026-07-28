@@ -38,8 +38,10 @@ struct RbTrack {
 	int32_t downbeat = 0;
 	std::vector<uint8_t> wf_height, wf_low, wf_mid, wf_high;
 	std::vector<AnlzCue> cues;   // memory cues -> ANLZ PCOB/PCO2
+	std::string artwork;         // embedded cover-art bytes (JPEG/PNG), if any
+	std::vector<std::pair<std::string, int>> playlists;  // (playlist name, sort)
 	// assigned during build:
-	uint32_t id = 0, artist_id = 0, album_id = 0, genre_id = 0, label_id = 0, key_id = 0, color_id = 0;
+	uint32_t id = 0, artist_id = 0, album_id = 0, genre_id = 0, label_id = 0, key_id = 0, color_id = 0, artwork_id = 0;
 	std::string analyze_path;  // /PIONEER/USBANLZ/Pxxx/xxxxxxxx/ANLZ0000.DAT
 	std::string content_path;  // /Contents/<file> — USB-relative audio path (file_path in the pdb)
 };
@@ -114,7 +116,7 @@ std::string TrackRow(const RbTrack &t) {
 	h.u4(0);                           // 14 u2
 	h.u2(0);                           // 18 u3
 	h.u2(0);                           // 1a u4
-	h.u4(0);                           // 1c artwork_id
+	h.u4(t.artwork_id);                // 1c artwork_id
 	h.u4(t.key_id);                    // 20 key_id
 	h.u4(0);                           // 24 original_artist_id
 	h.u4(t.label_id);                  // 28 label_id
@@ -177,6 +179,9 @@ std::string PlaylistTreeRow(uint32_t id, uint32_t parent, uint32_t sort, bool fo
 }
 std::string PlaylistEntryRow(uint32_t entry_index, uint32_t track_id, uint32_t playlist_id) {
 	LE r; r.u4(entry_index); r.u4(track_id); r.u4(playlist_id); return r.b;
+}
+std::string ArtworkRow(uint32_t id, const std::string &path) {
+	LE r; r.u4(id); r.raw(Dss(path)); return r.b;
 }
 
 //===--------------------------------------------------------------------===//
@@ -252,7 +257,8 @@ std::string EmitPage(uint32_t page_index, uint32_t type, uint32_t next_page, uin
 //===--------------------------------------------------------------------===//
 struct Table { uint32_t type; std::vector<std::string> rows; };
 
-std::string BuildPdb(std::vector<RbTrack> &tracks) {
+std::string BuildPdb(std::vector<RbTrack> &tracks,
+                     std::vector<std::pair<std::string, std::string>> &art_files) {
 	// Intern id-tables.
 	std::map<std::string, uint32_t> artists, albums, genres, labels, keys;
 	auto intern = [](std::map<std::string, uint32_t> &m, const std::string &k) -> uint32_t {
@@ -279,6 +285,27 @@ std::string BuildPdb(std::vector<RbTrack> &tracks) {
 	// Table rows (20 tables, type == index).
 	std::vector<Table> tabs(20);
 	for (uint32_t i = 0; i < 20; i++) tabs[i].type = i;
+
+	// Artwork (table type 13): dedup identical images, assign ids, write files to
+	// /PIONEER/Artwork, set each track's artwork_id. Must run before TrackRow().
+	std::map<std::string, uint32_t> art_ids; // bytes -> id
+	for (auto &t : tracks) {
+		if (t.artwork.empty()) continue;
+		auto it = art_ids.find(t.artwork);
+		if (it == art_ids.end()) {
+			uint32_t aid = (uint32_t)art_ids.size() + 1;
+			art_ids[t.artwork] = aid;
+			const char *ext = (t.artwork.size() > 1 && (uint8_t)t.artwork[0] == 0x89) ? "png" : "jpg";
+			char ap[96];
+			std::snprintf(ap, sizeof(ap), "/PIONEER/Artwork/%05u.%s", aid, ext);
+			tabs[13].rows.push_back(ArtworkRow(aid, ap));
+			art_files.push_back({std::string(ap), t.artwork});
+			t.artwork_id = aid;
+		} else {
+			t.artwork_id = it->second;
+		}
+	}
+
 	for (auto &t : tracks) tabs[0].rows.push_back(TrackRow(t));
 	auto emitNamed = [](std::map<std::string, uint32_t> &m, std::vector<std::string> &out,
 	                    const std::function<std::string(uint32_t, const std::string &)> &enc) {
@@ -302,6 +329,23 @@ std::string BuildPdb(std::vector<RbTrack> &tracks) {
 	tabs[7].rows.push_back(PlaylistTreeRow(1, 0, 0, false, "All Tracks"));
 	for (uint32_t i = 0; i < tracks.size(); i++)
 		tabs[8].rows.push_back(PlaylistEntryRow(i + 1, tracks[i].id, 1));
+	// User playlists (from per-track membership). Root-level, id 2..N.
+	std::map<std::string, uint32_t> pl_ids;                            // name -> tree id
+	std::map<uint32_t, std::vector<std::pair<int, uint32_t>>> pl_ent;  // id -> [(sort, track_id)]
+	for (auto &t : tracks)
+		for (auto &pl : t.playlists) {
+			auto it = pl_ids.find(pl.first);
+			uint32_t pid = (it == pl_ids.end()) ? (pl_ids[pl.first] = (uint32_t)pl_ids.size() + 2) : it->second;
+			pl_ent[pid].push_back({pl.second, t.id});
+		}
+	for (auto &kv : pl_ids)
+		tabs[7].rows.push_back(PlaylistTreeRow(kv.second, 0, kv.second, false, kv.first));
+	for (auto &kv : pl_ent) {
+		auto ents = kv.second;
+		std::sort(ents.begin(), ents.end());
+		uint32_t idx = 1;
+		for (auto &e : ents) tabs[8].rows.push_back(PlaylistEntryRow(idx++, e.second, kv.first));
+	}
 
 	// Pass 1: pack each table into pages and assign global indices (page 0 = header).
 	struct TP { uint32_t type; std::vector<std::vector<int>> pages; uint32_t first, last; };
@@ -436,6 +480,23 @@ static void RbSink(ExecutionContext &, FunctionData &bind, GlobalFunctionData &g
 		}
 		return o;
 	};
+	auto B = [&](const char *f, idx_t r) -> std::string {   // BLOB -> raw bytes
+		auto it = bd.col.find(f); if (it == bd.col.end()) return "";
+		Value v = input.data[it->second].GetValue(r); if (v.IsNull()) return "";
+		return StringValue::Get(v);
+	};
+	auto LP = [&](const char *f, idx_t r) -> std::vector<std::pair<std::string, int>> {
+		std::vector<std::pair<std::string, int>> o; auto it = bd.col.find(f); if (it == bd.col.end()) return o;
+		Value v = input.data[it->second].GetValue(r); if (v.IsNull()) return o;
+		for (auto &pl : ListValue::GetChildren(v)) {
+			if (pl.IsNull()) continue;
+			auto &ch = StructValue::GetChildren(pl);
+			std::string name = (ch.size() > 0 && !ch[0].IsNull()) ? ch[0].ToString() : "";
+			int sort = (ch.size() > 1 && !ch[1].IsNull()) ? (int)ch[1].GetValue<int64_t>() : 0;
+			if (!name.empty()) o.push_back({name, sort});
+		}
+		return o;
+	};
 	for (idx_t r = 0; r < input.size(); r++) {
 		RbTrack t;
 		t.title = S("title", r); t.artist = S("artist", r); t.album = S("album", r);
@@ -459,6 +520,8 @@ static void RbSink(ExecutionContext &, FunctionData &bind, GlobalFunctionData &g
 		t.wf_height = LU("height", r); t.wf_low = LU("low", r);
 		t.wf_mid = LU("mid", r); t.wf_high = LU("high", r);
 		t.cues = LC("cues", r);
+		t.artwork = B("art", r);
+		t.playlists = LP("playlists", r);
 		gs.tracks.push_back(std::move(t));
 	}
 }
@@ -470,9 +533,17 @@ static void RbFinalize(ClientContext &, FunctionData &, GlobalFunctionData &gsta
 	namespace fs = std::filesystem;
 	fs::create_directories(fs::path(gs.usb_root) / "PIONEER" / "rekordbox");
 	fs::create_directories(fs::path(gs.usb_root) / "PIONEER" / "USBANLZ");
-	std::string pdb = BuildPdb(gs.tracks);
+	std::vector<std::pair<std::string, std::string>> art_files;
+	std::string pdb = BuildPdb(gs.tracks, art_files);
 	std::ofstream out(fs::path(gs.usb_root) / "PIONEER" / "rekordbox" / "export.pdb", std::ios::binary);
 	out.write(pdb.data(), (std::streamsize)pdb.size());
+	// Cover-art files under /PIONEER/Artwork (paths recorded in the artwork table).
+	for (auto &af : art_files) {
+		std::error_code aec;
+		auto p = fs::path(gs.usb_root) / af.first.substr(1);  // strip leading '/'
+		fs::create_directories(p.parent_path(), aec);
+		std::ofstream(p, std::ios::binary).write(af.second.data(), (std::streamsize)af.second.size());
+	}
 	for (auto &t : gs.tracks) {
 		std::error_code ec;
 		// 1. Copy the audio onto the USB under /Contents (what file_path now points at).
