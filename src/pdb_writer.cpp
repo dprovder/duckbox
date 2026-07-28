@@ -224,7 +224,8 @@ std::string EmitPage(uint32_t page_index, uint32_t type, uint32_t next_page, uin
 	uint32_t r = (uint32_t)row_ids.size();
 	uint32_t packed = (r & 0x1fff) | ((r & 0x7ff) << 13); // num_row_offsets(13) | num_rows(11)
 	put(24, packed, 3);
-	page[27] = (char)0x24; // page_flags: data page
+	page[27] = (char)0x34; // page_flags: real rekordbox data page
+	put(0x20, 1, 2);       // @0x20 = 1 (as in real exports)
 	// heap + offsets
 	uint32_t heap = HEAP;
 	std::vector<uint16_t> offs;
@@ -251,6 +252,25 @@ std::string EmitPage(uint32_t page_index, uint32_t type, uint32_t next_page, uin
 		}
 		put(base - 4, present, 2);
 	}
+	return page;
+}
+
+// The empty "strange" page real rekordbox puts first in every table; the data
+// pages follow via next_page. Firmware navigates first_page -> here -> next.
+std::string EmitStrangePage(uint32_t page_index, uint32_t type, uint32_t next_page) {
+	std::string page(PAGE, '\0');
+	auto put = [&](uint32_t off, uint32_t v, int n) {
+		for (int i = 0; i < n; i++) page[off + i] = (char)((v >> (8 * i)) & 0xff);
+	};
+	put(4, page_index, 4);
+	put(8, type, 4);
+	put(12, next_page, 4);
+	put(16, 1, 4);          // @0x10 transaction id
+	page[0x1b] = (char)0x64; // page_flags: strange/non-data page
+	put(0x20, 0x1fff, 2);
+	put(0x22, 0x1fff, 2);   // num_rows_large = sentinel
+	put(0x24, 0x03ec, 2);
+	put(0x26, 1, 2);
 	return page;
 }
 
@@ -366,9 +386,9 @@ std::string BuildPdb(std::vector<RbTrack> &tracks,
 	uint32_t next_index = 1;
 	for (auto &tab : tabs) {
 		TP tp; tp.type = tab.type;
-		tp.pages = PackRows(tab.rows);
-		tp.first = next_index;
-		tp.last = next_index + (uint32_t)tp.pages.size() - 1;
+		tp.pages = PackRows(tab.rows);             // data pages (>=1)
+		tp.first = next_index;                     // the empty "strange" page
+		tp.last = next_index + (uint32_t)tp.pages.size(); // strange + data pages
 		next_index = tp.last + 1;
 		tps.push_back(std::move(tp));
 	}
@@ -396,9 +416,11 @@ std::string BuildPdb(std::vector<RbTrack> &tracks,
 
 	for (size_t ti = 0; ti < tps.size(); ti++) {
 		auto &tp = tps[ti];
+		// empty "strange" page first, pointing at the first data page
+		out += EmitStrangePage(tp.first, tp.type, tp.first + 1);
 		for (size_t pi = 0; pi < tp.pages.size(); pi++) {
-			uint32_t idx = tp.first + (uint32_t)pi;
-			uint32_t next = (pi + 1 < tp.pages.size()) ? idx + 1 : total_pages; // past end
+			uint32_t idx = tp.first + 1 + (uint32_t)pi;                  // data pages follow
+			uint32_t next = (pi + 1 < tp.pages.size()) ? idx + 1 : total_pages;
 			out += EmitPage(idx, tp.type, next, 1, tabs[ti].rows, tp.pages[pi]);
 		}
 	}
