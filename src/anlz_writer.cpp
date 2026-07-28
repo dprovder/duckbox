@@ -198,10 +198,67 @@ std::string BuildVbr(const std::string &) {
 	return body.b;
 }
 
-// Empty cue lists, matching real exports: PCOB (type,u4=0,0xffffffff) for the
-// .DAT/.EXT ordinary+hot lists, PCO2 (type,u4=0) for the .EXT extended lists.
-std::string BuildCue(uint32_t type) { BE b; b.u4(type); b.u4(0); b.u4(0xffffffff); return b.b; }
-std::string BuildCue2(uint32_t type) { BE b; b.u4(type); b.u4(0); return b.b; }
+// PCOB cue list (type 0 = memory cues, 1 = hot cues) with PCPT entries. Empty
+// cues reproduces the original byte-identical placeholder (num=0, 0xffffffff).
+std::string BuildCue(uint32_t type, const std::vector<AnlzCue> &cues = {}) {
+	BE b;
+	b.u4(type);                                              // cue_list_type
+	b.u2(0);                                                 // (pad)
+	b.u2((uint16_t)cues.size());                             // num_cues
+	b.u4(cues.empty() ? 0xffffffff : (uint32_t)cues.size()); // memory_count
+	for (size_t i = 0; i < cues.size(); i++) {
+		BE e;
+		e.fourcc("PCPT");
+		e.u4(0x1c);          // len_header
+		e.u4(0x38);          // len_entry (56)
+		e.u4(0);             // hot_cue: 0 = memory cue
+		e.u4(0);             // status
+		e.u4(0x00010000);    // (always 0x10000)
+		e.u2(i == 0 ? 0xffff : (uint16_t)i);                          // order_first
+		e.u2(i + 1 == cues.size() ? 0xffff : (uint16_t)(i + 1));      // order_last
+		e.u1(1);             // cue_entry_type: 1 = memory cue (point)
+		e.u1(0); e.u1(0); e.u1(0);
+		e.u4(cues[i].time_ms);
+		e.u4(0xffffffff);    // loop_time (not a loop)
+		for (int k = 0; k < 16; k++) e.u1(0);
+		b.raw(e.b);
+	}
+	return b.b;
+}
+
+// PCO2 extended cue list (nxs2/CDJ-3000): adds colour + comment per cue.
+std::string BuildCue2(uint32_t type, const std::vector<AnlzCue> &cues = {}) {
+	BE b;
+	b.u4(type);                     // cue_list_type
+	b.u2((uint16_t)cues.size());    // num_cues
+	b.u2(0);                        // (pad)
+	for (auto &c : cues) {
+		std::string cmt;            // UTF-16BE comment + trailing NUL
+		for (unsigned char ch : c.comment) { cmt.push_back(0); cmt.push_back((char)ch); }
+		cmt.push_back(0); cmt.push_back(0);
+		uint32_t len_comment = (uint32_t)cmt.size();
+		BE e;
+		e.fourcc("PCP2");
+		e.u4(0x10);                 // len_header
+		e.u4(48 + len_comment);     // len_entry
+		e.u4(0);                    // hot_cue: 0 = memory cue
+		e.u1(1);                    // cue_entry_type: point
+		e.u1(0); e.u1(0); e.u1(0);
+		e.u4(c.time_ms);
+		e.u4(0xffffffff);           // loop_time
+		e.u1(0);                    // color_id
+		for (int k = 0; k < 7; k++) e.u1(0);
+		e.u2(0); e.u2(0);           // loop numerator / denominator
+		e.u4(len_comment);
+		e.raw(cmt);
+		e.u1(0);                                    // color_code
+		e.u1((c.color >> 16) & 0xff);               // red
+		e.u1((c.color >> 8) & 0xff);                // green
+		e.u1(c.color & 0xff);                       // blue
+		b.raw(e.b);
+	}
+	return b.b;
+}
 
 } // namespace
 
@@ -210,7 +267,8 @@ std::string BuildCue2(uint32_t type) { BE b; b.u4(type); b.u4(0); return b.b; }
 //===--------------------------------------------------------------------===//
 std::string BuildAnlzDatBytes(const std::string &path, const std::vector<double> &beats, double bpm,
                               int downbeat, const std::vector<uint8_t> &h, const std::vector<uint8_t> &lo,
-                              const std::vector<uint8_t> &mi, const std::vector<uint8_t> &hi) {
+                              const std::vector<uint8_t> &mi, const std::vector<uint8_t> &hi,
+                              const std::vector<AnlzCue> &cues) {
 	// Tag order matches a real rekordbox export.
 	BE sec;
 	PutTag(sec, "PPTH", 0x10, BuildPath(path));
@@ -218,21 +276,21 @@ std::string BuildAnlzDatBytes(const std::string &path, const std::vector<double>
 	PutTag(sec, "PQTZ", 0x18, BuildBeatGrid(beats, bpm, downbeat));
 	PutTag(sec, "PWAV", 0x14, BuildMonoPreview(h, lo, mi, hi, 400, 5));
 	PutTag(sec, "PWV2", 0x14, BuildMonoPreview(h, lo, mi, hi, 100, 4));
-	PutTag(sec, "PCOB", 0x18, BuildCue(1)); // hot cues (empty)
-	PutTag(sec, "PCOB", 0x18, BuildCue(0)); // memory cues (empty)
+	PutTag(sec, "PCOB", 0x18, BuildCue(1));        // hot cues (empty)
+	PutTag(sec, "PCOB", 0x18, BuildCue(0, cues));  // memory cues
 	return Frame(sec.b);
 }
 
 std::string BuildAnlzExtBytes(const std::string &path, const std::vector<uint8_t> &h,
                               const std::vector<uint8_t> &lo, const std::vector<uint8_t> &mi,
-                              const std::vector<uint8_t> &hi) {
+                              const std::vector<uint8_t> &hi, const std::vector<AnlzCue> &cues) {
 	BE sec;
 	PutTag(sec, "PPTH", 0x10, BuildPath(path));
 	PutTag(sec, "PWV3", 0x18, BuildMonoDetail(h, lo, mi, hi));
 	PutTag(sec, "PCOB", 0x18, BuildCue(1));
-	PutTag(sec, "PCOB", 0x18, BuildCue(0));
+	PutTag(sec, "PCOB", 0x18, BuildCue(0, cues));
 	PutTag(sec, "PCO2", 0x14, BuildCue2(1));
-	PutTag(sec, "PCO2", 0x14, BuildCue2(0));
+	PutTag(sec, "PCO2", 0x14, BuildCue2(0, cues));
 	PutTag(sec, "PWV5", 0x18, BuildColorDetail(h, lo, mi, hi));
 	PutTag(sec, "PWV4", 0x18, BuildColorPreview(h, lo, mi, hi));
 	return Frame(sec.b);

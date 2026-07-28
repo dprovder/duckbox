@@ -56,7 +56,18 @@ players; NXS2 is fine on `PQTZ` alone.
 
 ---
 
-## 2. Cue & hot-cue points — `PCOB` / `PCO2`  🔴
+## 2. Cue & hot-cue points — `PCOB` / `PCO2`  ✅ DONE
+
+Implemented: every saved cue is exported as a **memory cue** (unlimited, always
+shows as a waveform marker on every CDJ). `PCOB` (memory list) is populated in
+both `.DAT` and `.EXT` with `PCPT` entries; `PCO2`/`PCP2` in `.EXT` add the
+per-cue **colour + comment** for nxs2/CDJ-3000. Plumbed via a `cues LIST(STRUCT(
+t, color, comment))` column joined onto `rb_deck` in the export query →
+`RbSink` → `AnlzCue` → `BuildCue`/`BuildCue2` in `anlz_writer.cpp`. Verified
+byte-for-byte (times, comments, RGB). Hot-cue (A–H) slots left empty for now.
+Original design below.
+
+
 
 CDJs read cues from the **ANLZ** file, not the pdb. Two tags:
 

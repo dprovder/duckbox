@@ -1323,8 +1323,19 @@ function wireModals(){
     btn.disabled=true; btn.innerHTML='<span class="spin"></span> Building…';
     log.className='log show'; log.textContent='Writing '+S.sel.size+' tracks to '+dest+' …\n';
     const list=[...S.sel].map(sqlStr).join(',');
-    const sql=`COPY (SELECT d.* FROM rb_deck d WHERE d.filename IN
-      (SELECT filename FROM track_analysis WHERE pos IN (${list}))) TO ${sqlStr(dest)} (FORMAT rekordbox)`;
+    // join each track's saved cues (as a LIST(STRUCT) the export sink reads) so
+    // they land in the ANLZ PCOB/PCO2 tags.
+    const sql=`COPY (
+      SELECT d.*, c.cues
+      FROM rb_deck d
+      LEFT JOIN (
+        SELECT ta.filename AS fn,
+               list(struct_pack(t := cu.time_ms, color := coalesce(cu.color,0),
+                                comment := coalesce(cu.comment,'')) ORDER BY cu.time_ms) AS cues
+        FROM cues cu JOIN track_analysis ta USING(pos) GROUP BY ta.filename
+      ) c ON c.fn = d.filename
+      WHERE d.filename IN (SELECT filename FROM track_analysis WHERE pos IN (${list}))
+    ) TO ${sqlStr(dest)} (FORMAT rekordbox)`;
     try{
       const t0=Date.now();
       await duck(sql);

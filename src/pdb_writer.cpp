@@ -37,6 +37,7 @@ struct RbTrack {
 	std::vector<double> beats;
 	int32_t downbeat = 0;
 	std::vector<uint8_t> wf_height, wf_low, wf_mid, wf_high;
+	std::vector<AnlzCue> cues;   // memory cues -> ANLZ PCOB/PCO2
 	// assigned during build:
 	uint32_t id = 0, artist_id = 0, album_id = 0, genre_id = 0, label_id = 0, key_id = 0, color_id = 0;
 	std::string analyze_path;  // /PIONEER/USBANLZ/Pxxx/xxxxxxxx/ANLZ0000.DAT
@@ -420,6 +421,21 @@ static void RbSink(ExecutionContext &, FunctionData &bind, GlobalFunctionData &g
 		for (auto &c : ListValue::GetChildren(v)) if (!c.IsNull()) o.push_back(c.GetValue<uint8_t>());
 		return o;
 	};
+	// LIST(STRUCT(t, color, comment)) -> memory cues
+	auto LC = [&](const char *f, idx_t r) -> std::vector<AnlzCue> {
+		std::vector<AnlzCue> o; auto it = bd.col.find(f); if (it == bd.col.end()) return o;
+		Value v = input.data[it->second].GetValue(r); if (v.IsNull()) return o;
+		for (auto &cue : ListValue::GetChildren(v)) {
+			if (cue.IsNull()) continue;
+			auto &ch = StructValue::GetChildren(cue);
+			AnlzCue ac;
+			if (ch.size() > 0 && !ch[0].IsNull()) ac.time_ms = (uint32_t)ch[0].GetValue<int64_t>();
+			if (ch.size() > 1 && !ch[1].IsNull()) ac.color = (uint32_t)ch[1].GetValue<int64_t>();
+			if (ch.size() > 2 && !ch[2].IsNull()) ac.comment = ch[2].ToString();
+			o.push_back(ac);
+		}
+		return o;
+	};
 	for (idx_t r = 0; r < input.size(); r++) {
 		RbTrack t;
 		t.title = S("title", r); t.artist = S("artist", r); t.album = S("album", r);
@@ -442,6 +458,7 @@ static void RbSink(ExecutionContext &, FunctionData &bind, GlobalFunctionData &g
 		t.downbeat = (int32_t)D("downbeat_index", r);
 		t.wf_height = LU("height", r); t.wf_low = LU("low", r);
 		t.wf_mid = LU("mid", r); t.wf_high = LU("high", r);
+		t.cues = LC("cues", r);
 		gs.tracks.push_back(std::move(t));
 	}
 }
@@ -471,10 +488,10 @@ static void RbFinalize(ClientContext &, FunctionData &, GlobalFunctionData &gsta
 		fs::create_directories(d, ec);
 		if (t.beats.empty()) continue; // no analysis provided -> pdb + audio only
 		std::string dat = BuildAnlzDatBytes(t.content_path, t.beats, t.bpm, t.downbeat,
-		                                    t.wf_height, t.wf_low, t.wf_mid, t.wf_high);
+		                                    t.wf_height, t.wf_low, t.wf_mid, t.wf_high, t.cues);
 		std::ofstream(d / "ANLZ0000.DAT", std::ios::binary).write(dat.data(), (std::streamsize)dat.size());
 		if (!t.wf_height.empty()) {
-			std::string ext = BuildAnlzExtBytes(t.content_path, t.wf_height, t.wf_low, t.wf_mid, t.wf_high);
+			std::string ext = BuildAnlzExtBytes(t.content_path, t.wf_height, t.wf_low, t.wf_mid, t.wf_high, t.cues);
 			std::ofstream(d / "ANLZ0000.EXT", std::ios::binary).write(ext.data(), (std::streamsize)ext.size());
 		}
 	}
