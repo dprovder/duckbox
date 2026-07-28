@@ -590,6 +590,18 @@ static void RbSink(ExecutionContext &, FunctionData &bind, GlobalFunctionData &g
 		t.year = (int32_t)D("year", r);
 		t.rating = (int32_t)D("rating", r);
 		t.file_type = FileTypeFromPath(t.file_path);
+		// Real rekordbox never writes file_size/bitrate/sample_rate as 0; a CDJ
+		// treats a zero-size track as a missing file and hides it from browse.
+		// rb_deck doesn't carry these, so derive them: stat the (still-local) file
+		// for the byte count, estimate bitrate from size/duration, default 44.1kHz.
+		if (t.file_size == 0 && !t.file_path.empty()) {
+			std::error_code ec;
+			auto sz = std::filesystem::file_size(t.file_path, ec);
+			if (!ec) t.file_size = (int64_t)sz;
+		}
+		if (t.bitrate == 0 && t.file_size > 0 && t.duration_sec > 0)
+			t.bitrate = (int64_t)(t.file_size * 8 / (t.duration_sec * 1000)); // kbps
+		if (t.sample_rate == 0) t.sample_rate = 44100;
 		t.beats = LD("beats", r);
 		t.downbeat = (int32_t)D("downbeat_index", r);
 		t.wf_height = LU("height", r); t.wf_low = LU("low", r);
