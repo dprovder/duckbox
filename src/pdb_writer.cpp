@@ -277,7 +277,8 @@ std::string EmitPage(uint32_t page_index, uint32_t type, uint32_t next_page, uin
 
 // The empty "strange" page real rekordbox puts first in every table; the data
 // pages follow via next_page. Firmware navigates first_page -> here -> next.
-std::string EmitStrangePage(uint32_t page_index, uint32_t type, uint32_t next_page) {
+std::string EmitStrangePage(uint32_t page_index, uint32_t type, uint32_t next_page,
+                            uint32_t first_data_page) {
 	std::string page(PAGE, '\0');
 	auto put = [&](uint32_t off, uint32_t v, int n) {
 		for (int i = 0; i < n; i++) page[off + i] = (char)((v >> (8 * i)) & 0xff);
@@ -291,11 +292,21 @@ std::string EmitStrangePage(uint32_t page_index, uint32_t type, uint32_t next_pa
 	put(0x22, 0x1fff, 2);   // num_rows_large = sentinel
 	put(0x24, 0x03ec, 2);
 	put(0x26, 0, 2);
-	// Real rekordbox writes the strange (index) page's own page index as a u2 at
-	// the start of its heap (@0x28). The firmware reads each table's index page
-	// first; a 0 here (instead of the page index) breaks navigation into the table
-	// so nothing browses, even though the data pages are perfectly valid.
-	put(HEAP, page_index, 2);
+	// THE index (strange) page carries a navigation structure the CDJ firmware uses
+	// to enumerate the table — crate-digger/kaitai skip these pages (they read via
+	// the data-page linked list), so this was invisible, but WITHOUT it the player
+	// finds zero rows and the table browses empty. Real rekordbox fills the whole
+	// heap. Layout for a table with <=1 data page (verified byte-exact vs two
+	// CDJ-validated exports):
+	//   u32 page_index | u32 first_data_page (0x03ffffff if none) | u32 0x03ffffff |
+	//   u32 0 | u32 0x1fff0000 | 1004x u32 0x1ffffff8 | 20 trailing zero bytes.
+	// (Multi-data-page tables use a longer variant — TODO for full-library exports.)
+	put(HEAP + 0, page_index, 4);
+	put(HEAP + 4, first_data_page ? first_data_page : 0x03ffffff, 4);
+	put(HEAP + 8, 0x03ffffff, 4);
+	put(HEAP + 12, 0, 4);
+	put(HEAP + 16, 0x1fff0000, 4);
+	for (int k = 0; k < 1004; k++) put(HEAP + 20 + 4 * k, 0x1ffffff8, 4);
 	return page;
 }
 
@@ -372,10 +383,9 @@ std::string BuildPdb(std::vector<RbTrack> &tracks,
 	emitNamed(labels, tabs[4].rows, LabelRow);
 	emitNamed(keys, tabs[5].rows, KeyRow);
 	// colors: none for now
-	// One "All Tracks" playlist so tracks browse from the playlist menu.
-	tabs[7].rows.push_back(PlaylistTreeRow(1, 0, 0, false, "All Tracks"));
-	for (uint32_t i = 0; i < tracks.size(); i++)
-		tabs[8].rows.push_back(PlaylistEntryRow(i + 1, tracks[i].id, 1));
+	// (Auto "All Tracks" playlist temporarily disabled — the CDJ-validated
+	// reference exports have zero playlists yet browse fine, so testing whether
+	// our playlist tables are what break the browse.)
 	// User playlists (from per-track membership). Root-level, id 2..N.
 	std::map<std::string, uint32_t> pl_ids;                            // name -> tree id
 	std::map<uint32_t, std::vector<std::pair<int, uint32_t>>> pl_ent;  // id -> [(sort, track_id)]
@@ -458,7 +468,8 @@ std::string BuildPdb(std::vector<RbTrack> &tracks,
 		// Strange index page first. Its next points at the first data page, or at
 		// this table's empty_candidate when the table has no data pages.
 		uint32_t after_strange = tp.pages.empty() ? tp.empty : (tp.first + 1);
-		out += EmitStrangePage(tp.first, tp.type, after_strange);
+		uint32_t first_data = tp.pages.empty() ? 0 : (tp.first + 1);
+		out += EmitStrangePage(tp.first, tp.type, after_strange, first_data);
 		for (size_t pi = 0; pi < tp.pages.size(); pi++) {
 			uint32_t idx = tp.first + 1 + (uint32_t)pi;                  // data pages follow
 			// chain to the next data page, or to the empty_candidate on the last page
