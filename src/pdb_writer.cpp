@@ -224,8 +224,14 @@ std::string EmitPage(uint32_t page_index, uint32_t type, uint32_t next_page, uin
 	uint32_t r = (uint32_t)row_ids.size();
 	uint32_t packed = (r & 0x1fff) | ((r & 0x7ff) << 13); // num_row_offsets(13) | num_rows(11)
 	put(24, packed, 3);
-	page[27] = (char)0x34; // page_flags: real rekordbox data page
-	put(0x20, 1, 2);       // @0x20 = 1 (as in real exports)
+	// page_flags: real rekordbox uses 0x34 for tracks(0) + history(19), 0x24 otherwise.
+	page[27] = (type == 0 || type == 19) ? (char)0x34 : (char)0x24;
+	// transaction_row_count / transaction_row_index: 0x1fff = "last transaction
+	// failed" — the sentinel rekordbox always writes so the player skips any
+	// transaction replay. (We previously wrote 1/0 = a valid committed txn, which
+	// can make the firmware attempt recovery against a nonexistent log.)
+	put(0x20, 0x1fff, 2);
+	put(0x22, 0x1fff, 2);
 	// heap + offsets
 	uint32_t heap = HEAP;
 	std::vector<uint16_t> offs;
@@ -382,18 +388,32 @@ std::string BuildPdb(std::vector<RbTrack> &tracks,
 	}
 
 	// Pass 1: pack each table into pages and assign global indices (page 0 = header).
-	struct TP { uint32_t type; std::vector<std::vector<int>> pages; uint32_t first, last; };
+	// Layout per table mirrors real rekordbox: an empty "strange" index page, then
+	// data pages (only if the table has rows), and every table gets an all-zero
+	// "empty candidate" page (allocated from a pool at the end of the file) that its
+	// header entry points at — the firmware reads empty_candidate to seed its page
+	// cache, and a 0 there would alias the file-header page (page 0) and crash it.
+	struct TP { uint32_t type; std::vector<std::vector<int>> pages; uint32_t first, last, empty; };
 	std::vector<TP> tps;
 	uint32_t next_index = 1;
 	for (auto &tab : tabs) {
 		TP tp; tp.type = tab.type;
-		tp.pages = PackRows(tab.rows);             // data pages (>=1)
-		tp.first = next_index;                     // the empty "strange" page
-		tp.last = next_index + (uint32_t)tp.pages.size(); // strange + data pages
-		next_index = tp.last + 1;
+		tp.first = next_index;                     // the empty "strange" index page
+		if (tab.rows.empty()) {
+			// empty table: just the strange page (first == last), like real rekordbox
+			tp.last = next_index;
+			next_index += 1;
+		} else {
+			tp.pages = PackRows(tab.rows);         // >=1 data page
+			tp.last = next_index + (uint32_t)tp.pages.size(); // last data page
+			next_index = tp.last + 1;
+		}
 		tps.push_back(std::move(tp));
 	}
-	uint32_t total_pages = next_index; // index just past the last data page
+	// Pool of all-zero empty pages (one empty_candidate per table) after the data.
+	uint32_t empty_base = next_index;
+	for (size_t i = 0; i < tps.size(); i++) tps[i].empty = empty_base + (uint32_t)i;
+	uint32_t total_pages = empty_base + (uint32_t)tps.size();
 
 	// Pass 2: emit header page + data pages.
 	std::string out(PAGE, '\0');
@@ -409,7 +429,7 @@ std::string BuildPdb(std::vector<RbTrack> &tracks,
 	uint32_t po = 0x1c;
 	for (size_t i = 0; i < tps.size(); i++) {
 		hput(po, tps[i].type, 4);
-		hput(po + 4, 0, 4);           // empty_candidate
+		hput(po + 4, tps[i].empty, 4); // empty_candidate: a real all-zero page
 		hput(po + 8, tps[i].first, 4);
 		hput(po + 12, tps[i].last, 4);
 		po += 16;
@@ -417,14 +437,20 @@ std::string BuildPdb(std::vector<RbTrack> &tracks,
 
 	for (size_t ti = 0; ti < tps.size(); ti++) {
 		auto &tp = tps[ti];
-		// empty "strange" page first, pointing at the first data page
-		out += EmitStrangePage(tp.first, tp.type, tp.first + 1);
+		// Strange index page first. Its next points at the first data page, or at
+		// this table's empty_candidate when the table has no data pages.
+		uint32_t after_strange = tp.pages.empty() ? tp.empty : (tp.first + 1);
+		out += EmitStrangePage(tp.first, tp.type, after_strange);
 		for (size_t pi = 0; pi < tp.pages.size(); pi++) {
 			uint32_t idx = tp.first + 1 + (uint32_t)pi;                  // data pages follow
-			uint32_t next = (pi + 1 < tp.pages.size()) ? idx + 1 : total_pages;
+			// chain to the next data page, or to the empty_candidate on the last page
+			uint32_t next = (pi + 1 < tp.pages.size()) ? idx + 1 : tp.empty;
 			out += EmitPage(idx, tp.type, next, 1, tabs[ti].rows, tp.pages[pi]);
 		}
 	}
+	// Emit the pool of all-zero empty candidate pages (real rekordbox pages the
+	// firmware may allocate into; on read they yield zero rows and are skipped).
+	for (size_t i = 0; i < tps.size(); i++) out += std::string(PAGE, '\0');
 	return out;
 }
 
