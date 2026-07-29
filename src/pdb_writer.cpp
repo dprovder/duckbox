@@ -90,6 +90,10 @@ bool IsAscii(const std::string &s) {
 }
 
 // DeviceSQL string: short ASCII (odd flag), long ASCII (0x40), or long UTF-16LE (0x90).
+// True when Dss() will emit a long-form string (0x40 ascii or 0x90 UTF-16), whose
+// payload sits 4 bytes past the start and therefore needs 4-byte alignment.
+bool IsLongForm(const std::string &s) { return !IsAscii(s) || s.size() > 126; }
+
 std::string Dss(const std::string &s) {
 	LE o;
 	if (IsAscii(s) && s.size() <= 126) {
@@ -115,9 +119,12 @@ std::string TrackRow(const RbTrack &t) {
 	h.u4(t.sample_rate ? (uint32_t)t.sample_rate : 44100); // 08 sample_rate (rekordbox never writes 0)
 	h.u4(0);                           // 0c composer_id
 	h.u4((uint32_t)t.file_size);       // 10 file_size
-	h.u4(0);                           // 14 u2
-	h.u2(0);                           // 18 u3
-	h.u2(0);                           // 1a u4
+	// @0x14 is unique per row in every real export (an analysis/sort id); @0x18 and
+	// @0x1a are nonzero and constant within a file. All three are 0 in our rows,
+	// which no real export ever has — mirror the shape instead.
+	h.u4(25248 + t.id);                // 14 per-row id
+	h.u2(58750);                       // 18 (constant within an export)
+	h.u2(38964);                       // 1a (constant within an export)
 	h.u4(t.artwork_id);                // 1c artwork_id
 	h.u4(t.key_id);                    // 20 key_id
 	h.u4(0);                           // 24 original_artist_id
@@ -135,7 +142,7 @@ std::string TrackRow(const RbTrack &t) {
 	h.u2((uint16_t)t.year);            // 50 year
 	h.u2(16);                          // 52 sample_depth
 	h.u2((uint16_t)t.duration_sec);    // 54 duration
-	h.u2(29);                          // 56 u5 (always 29)
+	h.u2(41);                          // 56 always 41 in real exports (we had 29)
 	h.u1((uint8_t)t.color_id);         // 58 color_id
 	h.u1((uint8_t)t.rating);           // 59 rating
 	h.u2(t.file_type);                 // 5a file_type
@@ -159,6 +166,13 @@ std::string TrackRow(const RbTrack &t) {
 	uint16_t ofs[21];
 	uint32_t base = 0x5e + 21 * 2; // = 0x88, where the string blob begins
 	for (int i = 0; i < 21; i++) {
+		// Long-form strings (0x40 ascii / 0x90 UTF-16) must start on a 4-byte
+		// boundary within the row: their payload begins 4 bytes in, so the player
+		// reads it with aligned 32-bit loads. Misaligning one faults the main CPU
+		// and hangs it (surfaces as E-8709 on the deck). Real exports pad to keep
+		// this invariant — 95 of 95 UTF-16 strings sampled are 4-byte aligned.
+		if (IsLongForm(strs[i]))
+			while ((base + blob.size()) % 4) blob += '\0';
 		ofs[i] = (uint16_t)(base + blob.size());
 		blob += Dss(strs[i]);
 	}
@@ -170,10 +184,16 @@ std::string TrackRow(const RbTrack &t) {
 }
 
 std::string ArtistRow(uint32_t id, const std::string &name) {
-	LE r; r.u2(0x60); r.u2(0); r.u4(id); r.u1(0x03); r.u1(0x0a); r.raw(Dss(name)); return r.b;
+	// Name normally sits at 0x0a, but a long-form (UTF-16) name must be 4-byte
+	// aligned, so real exports move it to 0x0c and pad. Same rule as track rows.
+	LE r; r.u2(0x60); r.u2(0); r.u4(id); r.u1(0x03);
+	if (IsLongForm(name)) { r.u1(0x0c); r.u2(0); } else { r.u1(0x0a); }
+	r.raw(Dss(name)); return r.b;
 }
 std::string AlbumRow(uint32_t id, uint32_t artist_id, const std::string &name) {
-	LE r; r.u2(0x80); r.u2(0); r.u4(0); r.u4(artist_id); r.u4(id); r.u4(0); r.u1(0x03); r.u1(0x16); r.raw(Dss(name)); return r.b;
+	LE r; r.u2(0x80); r.u2(0); r.u4(0); r.u4(artist_id); r.u4(id); r.u4(0); r.u1(0x03);
+	if (IsLongForm(name)) { r.u1(0x18); r.u2(0); } else { r.u1(0x16); }
+	r.raw(Dss(name)); return r.b;
 }
 std::string GenreRow(uint32_t id, const std::string &name) { LE r; r.u4(id); r.raw(Dss(name)); return r.b; }
 std::string LabelRow(uint32_t id, const std::string &name) { LE r; r.u4(id); r.raw(Dss(name)); return r.b; }
