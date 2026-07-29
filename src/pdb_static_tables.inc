@@ -1,5 +1,5 @@
 // Auto-extracted, track-independent pdb tables from a real rekordbox export
-// (regenerated from a CDJ-2000NXS-validated USB, ~/Music/random-usb). Byte-identical across exports. Do not edit by hand.
+// (a CDJ-2000NXS-validated USB export). Byte-identical across exports. Do not edit by hand.
 // Regenerate: python3 scripts/extract_static_tables.py > src/pdb_static_tables.inc
 namespace {
 const unsigned char ST_C_DATA[] = {0,0,0,0,0,1,0,0,11,80,105,110,107,0,0,0,0,0,0,0,0,2,0,0,9,82,101,100,0,0,0,0,0,3,0,0,15,79,114,97,110,103,101,0,0,0,0,0,0,4,0,0,15,89,101,108,108,111,119,0,0,0,0,0,0,5,0,0,13,71,114,101,101,110,0,0,0,0,0,0,0,6,0,0,11,65,113,117,97,0,0,0,0,0,0,0,0,7,0,0,11,66,108,117,101,0,0,0,0,0,0,0,0,8,0,0,15,80,117,114,112,108,101,0};
@@ -10,11 +10,14 @@ const unsigned char ST_U17_DATA[] = {15,0,20,0,6,1,0,0,16,0,21,0,99,1,0,0,18,0,2
 const int ST_U17_LENS[] = {8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8};
 const unsigned char ST_U18_DATA[] = {10,0,11,0,1,0,0,0,22,0,17,0,1,0,0,0,8,0,9,0,1,0,0,0,9,0,10,0,1,0,0,0,15,0,13,0,1,0,0,0,23,0,16,0,1,0,0,0,21,0,7,0,1,0,0,0,6,0,5,0,0,6,0,0,3,0,3,0,0,6,0,0,25,0,0,0,0,9,0,0,26,0,1,0,0,9,0,0,13,0,15,0,0,2,0,0,5,0,4,0,0,6,0,0,1,0,6,0,0,7,0,0,14,0,8,0,1,0,0,0,11,0,12,0,2,9,0,0,2,0,2,0,0,9,0,0};
 const int ST_U18_LENS[] = {8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8};
+const unsigned char ST_HIST_DATA[] = {128,2,160,4,37,0,0,0,0,0,0,0,23,50,48,49,52,45,49,48,45,49,57,25,30,11,49,48,48,48,3,0,0,0,0,0,0,0,0,0};
+const int ST_HIST_LENS[] = {40};
 struct StaticTab { uint32_t type; const unsigned char *data; const int *lens; int n; };
 const StaticTab STATIC_TABS[] = {
   {6, ST_C_DATA, ST_C_LENS, (int)(sizeof(ST_C_LENS)/sizeof(int))},
   {16, ST_COL_DATA, ST_COL_LENS, (int)(sizeof(ST_COL_LENS)/sizeof(int))},
   {17, ST_U17_DATA, ST_U17_LENS, (int)(sizeof(ST_U17_LENS)/sizeof(int))},
   {18, ST_U18_DATA, ST_U18_LENS, (int)(sizeof(ST_U18_LENS)/sizeof(int))},
+  {19, ST_HIST_DATA, ST_HIST_LENS, (int)(sizeof(ST_HIST_LENS)/sizeof(int))},
 };
 }

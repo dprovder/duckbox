@@ -48,7 +48,7 @@ def extract(typ):
     return rows
 
 
-TABLES = [(6, "C"), (16, "COL"), (17, "U17"), (18, "U18"), ]
+TABLES = [(6, "C"), (16, "COL"), (17, "U17"), (18, "U18"), (19, "HIST"), ]
 print("// Auto-extracted, track-independent pdb tables from a real rekordbox export")
 print("// (test/reference/export.pdb). Byte-identical across exports. Do not edit by hand.")
 print("// Regenerate: python3 scripts/extract_static_tables.py > src/pdb_static_tables.inc")
