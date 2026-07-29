@@ -116,6 +116,11 @@ std::string BuildBeatGrid(const std::vector<double> &beats, double bpm, int down
 	return body.b;
 }
 
+// Stored heights are RMS*(31/0.7) and run hotter than rekordbox's: our detail
+// waveform averaged 12.8/31 against 7.7 in real exports over comparable
+// material. Trim on the way out rather than re-analysing the whole library.
+constexpr double WAVE_GAIN = 0.6;
+
 // PWAV (400 cols) / PWV2 (100 cols): mono preview. byte = whiteness<<5 | height,
 // height is `hbits` low bits (5 for PWAV, 4 for PWV2).
 std::string BuildMonoPreview(const std::vector<uint8_t> &h, const std::vector<uint8_t> &lo,
@@ -126,7 +131,12 @@ std::string BuildMonoPreview(const std::vector<uint8_t> &h, const std::vector<ui
 	body.u4((uint32_t)cols);
 	body.u4(0x10000);
 	for (int c = 0; c < cols; c++) {
-		int height = (int)std::lround(RangeMax(h, c, cols) / 31.0 * hmax);
+		// Mean, not peak: taking the max of each window saturates dense music (our
+		// PWAV averaged 28.7/31 where real exports average 14.9 over the same
+		// material, i.e. a solid block instead of a shape).
+		// The window mean alone lands the preview at real levels; the extra detail
+		// trim is not wanted here (mean+trim came out at 8.0 vs 14.9 in real files).
+		int height = (int)std::lround(RangeMean(h, c, cols) / 31.0 * hmax);
 		height = std::clamp(height, 0, hmax);
 		if (hbits >= 5) {
 			uint8_t w = Whiteness(RangeMean(lo, c, cols), RangeMean(mi, c, cols), RangeMean(hi, c, cols));
@@ -148,7 +158,8 @@ std::string BuildMonoDetail(const std::vector<uint8_t> &h, const std::vector<uin
 	body.u4(0x00960000);   // unknown
 	for (int c = 0; c < n; c++) {
 		uint8_t w = Whiteness(lo[c], mi[c], hi[c]);
-		body.u1((uint8_t)((w << 5) | (std::min<int>(h[c], 31) & 0x1f)));
+		int hh = (int)std::lround(h[c] * WAVE_GAIN);
+		body.u1((uint8_t)((w << 5) | (std::clamp(hh, 0, 31) & 0x1f)));
 	}
 	return body.b;
 }
