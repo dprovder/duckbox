@@ -50,6 +50,13 @@ std::string Frame(const std::string &sections) {
 	f.fourcc("PMAI");
 	f.u4(len_header);
 	f.u4(len_header + (uint32_t)sections.size());
+	// The rest of the header is "padding" the kaitai spec skips outright, so
+	// readers never surface it — but every real analysis file carries the same
+	// three values here (36/36 .DAT and .EXT files checked), and we were writing
+	// zeros. The player appears to need them before it will use the analysis.
+	f.u4(0x00000001);
+	f.u4(0x00010000);
+	f.u4(0x00010000);
 	while (f.b.size() < len_header) f.u1(0);
 	f.raw(sections);
 	return f.b;
