@@ -62,6 +62,36 @@ int main() {
 	Check("artist row, non-ascii name shifts offset to 0x0c",
 	      std::string(1, a[9]), {0x0c});
 
+	// Full track-row string layout, against the expected offsets in rex's
+	// TestTrack_MarshalBinary. Note rex's OWN code fails this assertion: their
+	// expected bytes (taken from real rekordbox) pad comment(0xec) -> title(0xf0)
+	// so the UTF-16 title is 4-byte aligned, but their encoder packs it at 0xed.
+	// Our layout rule reproduces the padded, aligned offsets.
+	{
+		std::string strs[21] = {
+			"GBJX38209003", "", "2", "2", "", "", "", "ON", "", "", "2022-07-27",
+			"", "", "", "/PIONEER/USBANLZ/P03A/0000339E/ANLZ0000.DAT", "2022-07-27",
+			"", "Wir Leben F\xc3\xbc""r Die Nacht", "",
+			"Dax J - Wir Leben Fur Die Nacht.flac",
+			"/meteor/techno/Dax J - Wir Leben Fur Die Nacht.flac"};
+		const uint16_t want[21] = {0x88, 0x9a, 0x9b, 0x9d, 0x9f, 0xa0, 0xa1, 0xa2,
+		                           0xa5, 0xa6, 0xa7, 0xb2, 0xb3, 0xb4, 0xb5, 0xe1,
+		                           0xec, 0xf0, 0x122, 0x123, 0x148};
+		std::string blob; uint32_t base = 0x5e + 21 * 2; bool ok = true;
+		for (int i = 0; i < 21; i++) {
+			std::string enc = (i == 0) ? DssIsrc(strs[i]) : Dss(strs[i]);
+			bool longform = (i == 0) ? !strs[i].empty() : IsLongForm(strs[i]);
+			if (longform) while ((base + blob.size()) % 4) blob += '\0';
+			if ((uint16_t)(base + blob.size()) != want[i]) {
+				printf("  FAIL  track string layout: slot %d at 0x%x, want 0x%x\n",
+				       i, (unsigned)(base + blob.size()), want[i]);
+				ok = false; failures++; break;
+			}
+			blob += enc;
+		}
+		if (ok) printf("  PASS  track row string offsets (rex expected vector; rex's own code fails this)\n");
+	}
+
 	printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);
 	return failures ? 1 : 0;
 }
