@@ -176,12 +176,13 @@ std::vector<std::vector<int>> PackRows(const std::vector<std::string> &rows) {
 	for (int i = 0; i < (int)rows.size(); i++) {
 		int n = (int)cur.size() + 1;
 		uint32_t groups = (n + 15) / 16;
-		uint32_t need = heap + (uint32_t)rows[i].size() + groups * 0x24;
+		uint32_t sz = ((uint32_t)rows[i].size() + 3) & ~3u; // rows are 4-byte aligned
+		uint32_t need = heap + sz + groups * 0x24;
 		if (!cur.empty() && need > PAGE) {
 			pages.push_back(cur); cur.clear(); heap = HEAP;
 		}
 		cur.push_back(i);
-		heap += (uint32_t)rows[i].size();
+		heap += sz;
 	}
 	pages.push_back(cur); // always at least one page (may be empty)
 	return pages;
@@ -229,6 +230,11 @@ std::string EmitPage(uint32_t page_index, uint32_t type, uint32_t next_page, uin
 			page[heap + 3] = (char)((ish >> 8) & 0xff);
 		}
 		heap += (uint32_t)body.size();
+		// Pad so the next row also starts on a 4-byte boundary. String offsets are
+		// relative to the row base, so a misaligned row undoes the in-row alignment
+		// and puts UTF-16 payloads on odd addresses (see IsLongForm in TrackRow).
+		// Every row in every real export starts 4-byte aligned (203/203, 37/37).
+		while ((heap - HEAP) % 4) heap++;
 		slot++;
 	}
 	uint32_t used = heap - HEAP;
