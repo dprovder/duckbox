@@ -138,27 +138,21 @@ std::string TrackRow(const RbTrack &t) {
 	return row.b;
 }
 
-std::string ArtistRow(uint32_t id, const std::string &name) {
-	// Name normally sits at 0x0a, but a long-form (UTF-16) name must be 4-byte
-	// aligned, so real exports move it to 0x0c and pad. Same rule as track rows.
-	LE r; r.u2(0x60); r.u2(0); r.u4(id); r.u1(0x03);
-	if (IsLongForm(name)) { r.u1(0x0c); r.u2(0); } else { r.u1(0x0a); }
-	r.raw(Dss(name)); return r.b;
-}
+// All row encoders live in pdb_bytes.hpp and are unit-tested against byte vectors
+// taken from real rekordbox exports (test/pdb_bytes_test.cpp).
+std::string ArtistRow(uint32_t id, const std::string &name) { return rbx::ArtistRowBytes(id, 0, name); }
 std::string AlbumRow(uint32_t id, uint32_t artist_id, const std::string &name) {
-	LE r; r.u2(0x80); r.u2(0); r.u4(0); r.u4(artist_id); r.u4(id); r.u4(0); r.u1(0x03);
-	if (IsLongForm(name)) { r.u1(0x18); r.u2(0); } else { r.u1(0x16); }
-	r.raw(Dss(name)); return r.b;
+	return rbx::AlbumRowBytes(id, 0, artist_id, name);
 }
-std::string GenreRow(uint32_t id, const std::string &name) { LE r; r.u4(id); r.raw(Dss(name)); return r.b; }
-std::string LabelRow(uint32_t id, const std::string &name) { LE r; r.u4(id); r.raw(Dss(name)); return r.b; }
-std::string KeyRow(uint32_t id, const std::string &name) { LE r; r.u4(id); r.u4(id); r.raw(Dss(name)); return r.b; }
-std::string ColorRow(uint32_t id, const std::string &name) { LE r; r.u2((uint16_t)id); r.u1(0); r.raw(Dss(name)); return r.b; }
+std::string GenreRow(uint32_t id, const std::string &name) { return rbx::GenreRowBytes(id, name); }
+std::string LabelRow(uint32_t id, const std::string &name) { return rbx::LabelRowBytes(id, name); }
+std::string KeyRow(uint32_t id, const std::string &name) { return rbx::KeyRowBytes(id, name); }
+std::string ColorRow(uint32_t id, const std::string &name) { return rbx::ColorRowBytes(id, name); }
 std::string PlaylistTreeRow(uint32_t id, uint32_t parent, uint32_t sort, bool folder, const std::string &name) {
-	LE r; r.u4(parent); r.u4(0); r.u4(sort); r.u4(id); r.u4(folder ? 1 : 0); r.raw(Dss(name)); return r.b;
+	return rbx::PlaylistTreeRowBytes(id, parent, sort, folder, name);
 }
 std::string PlaylistEntryRow(uint32_t entry_index, uint32_t track_id, uint32_t playlist_id) {
-	LE r; r.u4(entry_index); r.u4(track_id); r.u4(playlist_id); return r.b;
+	return rbx::PlaylistEntryRowBytes(entry_index, track_id, playlist_id);
 }
 std::string ArtworkRow(uint32_t id, const std::string &path) {
 	LE r; r.u4(id); r.raw(Dss(path)); return r.b;

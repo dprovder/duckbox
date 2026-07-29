@@ -78,4 +78,36 @@ inline std::string ArtistRowBytes(uint32_t id, uint16_t index_shift, const std::
 	return r.b;
 }
 
+inline std::string AlbumRowBytes(uint32_t id, uint16_t index_shift, uint32_t artist_id,
+                                 const std::string &name) {
+	LE r; r.u2(0x80); r.u2(index_shift); r.u4(0); r.u4(artist_id); r.u4(id); r.u4(0); r.u1(0x03);
+	if (IsLongForm(name)) { r.u1(0x18); r.u2(0); } else { r.u1(0x16); }
+	r.raw(Dss(name));
+	return r.b;
+}
+
+// genre/label: id then name. key: id twice then name.
+inline std::string GenreRowBytes(uint32_t id, const std::string &name) {
+	LE r; r.u4(id); r.raw(Dss(name)); return r.b;
+}
+inline std::string LabelRowBytes(uint32_t id, const std::string &name) {
+	LE r; r.u4(id); r.raw(Dss(name)); return r.b;
+}
+inline std::string KeyRowBytes(uint32_t id, const std::string &name) {
+	LE r; r.u4(id); r.u4(id); r.raw(Dss(name)); return r.b;
+}
+// color_row is five pad bytes, then a u2 id and a u1, then the name (name at 0x08).
+inline std::string ColorRowBytes(uint32_t id, const std::string &name) {
+	LE r; r.raw(std::string(5, '\0')); r.u2((uint16_t)id); r.u1(0); r.raw(Dss(name)); return r.b;
+}
+// playlist tree: parent, unknown, sort order, id, is-folder, then the name (at 0x14).
+inline std::string PlaylistTreeRowBytes(uint32_t id, uint32_t parent, uint32_t sort,
+                                        bool folder, const std::string &name) {
+	LE r; r.u4(parent); r.u4(0); r.u4(sort); r.u4(id); r.u4(folder ? 1 : 0); r.raw(Dss(name));
+	return r.b;
+}
+inline std::string PlaylistEntryRowBytes(uint32_t entry_index, uint32_t track_id, uint32_t playlist_id) {
+	LE r; r.u4(entry_index); r.u4(track_id); r.u4(playlist_id); return r.b;
+}
+
 } // namespace rbx
