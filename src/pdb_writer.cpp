@@ -48,6 +48,8 @@ struct RbTrack {
 	// assigned during build:
 	uint32_t id = 0, artist_id = 0, album_id = 0, genre_id = 0, label_id = 0, key_id = 0, color_id = 0, artwork_id = 0;
 	int32_t anlz_p = -1;       // known P folder (from ui/anlz-folders.json); -1 = unknown
+	int64_t anlz_index = -1;   // known analysis index; -1 = compute it, if we can
+	std::string usb_path;      // explicit USB-relative audio path; else /Contents/<filename>
 	std::string analyze_path;  // /PIONEER/USBANLZ/Pxxx/xxxxxxxx/ANLZ0000.DAT
 	std::string content_path;  // /Contents/<file> — USB-relative audio path (file_path in the pdb)
 };
@@ -323,7 +325,7 @@ std::string BuildPdb(std::vector<RbTrack> &tracks,
 		t.genre_id = intern(genres, t.genre);
 		t.label_id = intern(labels, t.label);
 		t.key_id = intern(keys, t.key);
-		t.content_path = "/Contents/" + t.filename;
+		t.content_path = t.usb_path.empty() ? ("/Contents/" + t.filename) : t.usb_path;
 		char buf[80];
 		// A player computes the analysis folder from the file path and reads only
 		// what sits exactly there, so point analyze_path at the folder it will
@@ -331,7 +333,11 @@ std::string BuildPdb(std::vector<RbTrack> &tracks,
 		// to a per-id folder: the pdb and audio are still correct, and
 		// ui/duckbox-learn repoints it once a player has chosen a folder.
 		uint32_t cand[2];
-		if (anlz::IndexCandidates(t.content_path, cand) > 0) {
+		if (t.anlz_index >= 0) {
+			int pf = (t.anlz_p >= 0 && t.anlz_p < anlz::kPFolders) ? t.anlz_p : 0x40;
+			std::snprintf(buf, sizeof(buf), "/PIONEER/USBANLZ/P%03X/%08X/ANLZ0000.DAT",
+			              pf, (uint32_t)t.anlz_index);
+		} else if (anlz::IndexCandidates(t.content_path, cand) > 0) {
 			// The player derives the folder itself and ignores this, so it only has
 			// to name one that exists on the drive: the known P when we have it,
 			// otherwise any of the 128 written below.
@@ -624,6 +630,13 @@ static void RbSink(ExecutionContext &, FunctionData &bind, GlobalFunctionData &g
 		// Supplying the folder a player was previously seen to use collapses that
 		// to one -- see ui/duckbox-learn, which harvests and caches it.
 		t.anlz_p = bd.col.count("anlz_p") ? (int32_t)D("anlz_p", r) : -1;
+		// The folder a player uses is a hash of the whole USB-relative path, and we
+		// can only compute the index for a couple of filename shapes. Both halves
+		// can instead be supplied per track -- harvested from a drive rekordbox
+		// wrote, which necessarily placed the analysis where a player reads it.
+		// usb_path must then match the path that was hashed, byte for byte.
+		t.anlz_index = bd.col.count("anlz_index") ? (int64_t)D("anlz_index", r) : -1;
+		t.usb_path = S("usb_path", r);
 		t.file_type = FileTypeFromPath(t.file_path);
 		// Real rekordbox never writes file_size/bitrate/sample_rate as 0; a CDJ
 		// treats a zero-size track as a missing file and hides it from browse.
@@ -688,7 +701,8 @@ static void RbFinalize(ClientContext &, FunctionData &, GlobalFunctionData &gsta
 		std::error_code ec;
 		// 1. Copy the audio onto the USB under /Contents (what file_path now points at).
 		if (!t.file_path.empty()) {
-			auto dst = fs::path(gs.usb_root) / "Contents" / t.filename;
+			auto rel = t.content_path.empty() ? ("/Contents/" + t.filename) : t.content_path;
+			auto dst = fs::path(gs.usb_root) / rel.substr(1);  // strip leading '/'
 			fs::create_directories(dst.parent_path(), ec);
 			fs::copy_file(t.file_path, dst, fs::copy_options::overwrite_existing, ec);
 		}
@@ -704,7 +718,13 @@ static void RbFinalize(ClientContext &, FunctionData &, GlobalFunctionData &gsta
 			ext = BuildAnlzExtBytes(t.content_path, t.wf_height, t.wf_low, t.wf_mid, t.wf_high, t.cues);
 		}
 		uint32_t cand[2];
-		int ncand = anlz::IndexCandidates(t.content_path, cand);
+		int ncand;
+		if (t.anlz_index >= 0) {
+			cand[0] = (uint32_t)t.anlz_index;
+			ncand = 1;
+		} else {
+			ncand = anlz::IndexCandidates(t.content_path, cand);
+		}
 		// With the P folder known there is exactly one place to write; without it,
 		// every candidate P. 128 copies of the analysis is ~8 MB a track, so a
 		// library wants ui/duckbox-learn to supply anlz_p and collapse this.
