@@ -89,3 +89,49 @@ clearly takes a different path.
 
 Getting further probably needs the DeviceSQL format documentation or firmware
 disassembly, not more USB experiments.
+
+
+## Measured weight table
+
+Recovered by using rekordbox itself as the oracle: generate files with controlled
+names, import and export them, then read the folder rekordbox assigned to each
+from `export.pdb`. rekordbox and the player agree on this function, so no CDJ is
+needed — 50 samples came from three exports.
+
+Weight is indexed by a character's distance from the **end of the filename**,
+counting the extension (so the last character of an `.mp3` stem is offset 4).
+Values are mod 200003.
+
+| end offset | weight |
+|---|---|
+| 4 | 84673 |
+| 5 | 128047 |
+| 6 | 119759 |
+| 7 | 142065 |
+| 8 | 103380 |
+| 9 | 172628 |
+| 10 | 110359 |
+| 11 | 10281 |
+| 12 | 194214 |
+| 13 | 161890 |
+| 14 | 41273 |
+| 15 | 184536 |
+| 16 | 157977 |
+| 17 | 158186 |
+| 18 | 50320 |
+| 19 | 64015 |
+| 21 | 127140 |
+| 23 | 31025 |
+| 25 | 100387 |
+| 27 | 31896 |
+
+Offsets 4, 5 and 6 independently match the constants recovered earlier from CDJ
+probes (84673 / 128047 / 119759), confirming the weights are position-from-the-end
+constants that transfer between filenames of different lengths and content.
+
+Carries must be resolved when combining measurements: an observation only fixes
+`W` modulo the wrap count, so each measurement yields a candidate set
+`{(delta + k*(2^32 mod P)) * dv^-1}` with `k` bounded by the signed character
+delta, and the true weight is the intersection across measurements. Probes using
+characters *below* the reference (negative deltas) shift the carry pattern and
+resolve ties that same-direction probes cannot.
