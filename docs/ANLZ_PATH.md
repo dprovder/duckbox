@@ -51,3 +51,41 @@ so wide they carry almost no information.
 
 21973 tuples satisfy all 39 constraints, but they agree on the predicted index for
 every unseen name, so the residual degeneracy is harmless.
+
+
+## Open problem: the player will not display our analysis
+
+Browsing works. Playback works. Duration is right. But no waveform, grid or cues,
+even when our analysis sits in the exact folder the player computes and
+`analyze_path` agrees with it.
+
+Individually proven correct against a CDJ-validated drive (`random-usb`):
+
+* our audio — plays with a waveform under that drive's pdb
+* our ANLZ bytes — display correctly when placed at that drive's `analyze_path`
+* our track rows — the same six tracks analysed by us and diffed field by field
+  against rekordbox's rows for the identical files: `file_size`, `sample_rate`,
+  `bitmask`, `u3@18`, `u4@1a`, `u5@56`, `u7@5c` all match; the raw byte dump shows
+  an identical 21-slot string layout
+* the tables we leave empty — the working pdb still works with genres, albums,
+  labels and artwork emptied
+* the full `PIONEER` skeleton — now generated, `USBMNG.DAT` byte-identical
+* the linkage — our pdb using rekordbox's exact `file_path` and `analyze_path`,
+  with our analysis in that folder, still does not display
+
+### Where to look next
+
+The format is DeviceSQL (Encirq, 1998; now Ubiquitous AI). It is proprietary,
+with no published format spec or source, and its SQL is compiled to C at build
+time, so all query logic lives in the player firmware. DeviceSQL ships MPHash and
+MPAVL indexing, which is very likely what the `page_flags & 0x40` "index" pages
+are. We reproduce their *shape* — `u32 page_index | u32 first_data_page | u32
+0x03ffffff | u32 0 | u32 word5 | N entries | 0x1ffffff8 fill` — but the meaning is
+inferred from six sample files. Entries look like row pointers rather than plain
+page numbers (`0x65b` = page 203, slot 3), so an index that merely looks right may
+not resolve a lookup. If the player reaches analysis through an index rather than
+straight off the row, that would be invisible to black-box testing, since browsing
+clearly takes a different path.
+
+Getting further probably needs the DeviceSQL format documentation or firmware
+disassembly, not more USB experiments.
