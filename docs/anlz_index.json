@@ -200,7 +200,8 @@
   },
   "deck_observed_P": {
     "TE3F.mp3": 20,
-    "TC2D.mp3": 69
+    "TC2D.mp3": 69,
+    "TA1B.mp3": 22
   },
   "_P_note": "P folder is a second, unsolved hash. Not a function of the index or of the raw 32-bit hash (searched shifts 0-31 x moduli 2-400).",
   "templates": {
@@ -248,5 +249,15 @@
       "P": 100
     }
   },
-  "_why_wide": "Intersecting observations cannot narrow H0 below its residue class: candidates are an arithmetic progression of step 200003, so only a sample straddling a 2**32 wrap discriminates. .mp3 took 39 samples to reach 5 candidates; .m4a has 7 and sits at 6414. Writing every distinct predicted index (at most 2, measured over the whole namespace) makes this immaterial."
+  "_why_wide": "Intersecting observations cannot narrow H0 below its residue class: candidates are an arithmetic progression of step 200003, so only a sample straddling a 2**32 wrap discriminates. .mp3 took 39 samples to reach 5 candidates; .m4a has 7 and sits at 6414. Writing every distinct predicted index (at most 2, measured over the whole namespace) makes this immaterial.",
+  "P_hypotheses_ruled_out": [
+    "bitfield of the raw 32-bit index hash (shifts 0-31 x moduli 2-400)",
+    "bucket/sub-bucket split of h = q*200003 + index (q%128, q>>7, q>>8, q%121, ...)",
+    "stock hash of the path: CRC32, Adler32, FNV-1, FNV-1a, djb2, djb2-xor, sdbm, Java, byte-sum -- across 4 path forms x every shift x moduli {128,127,121,200,256}",
+    "linear mod 128 (fails on T123 given T000/T001/T010/T100, same batch, identical audio)",
+    "ANY bitfield of ANY linear hash of the path: solving the 9-sample offset-4 group over a 2^22 grid of the weight gives zero feasible values. Middle-bit extractions reduce to the same model with a different modulus, so they are covered too. This rules out every polynomial/rolling hash, since those are linear in the characters.",
+    "Beatty function of the index, floor(128*frac(index*theta)) over a 2^24 theta grid (best 6/41 vs 0.3 chance -- just the max of 16M trials)",
+    "scanned rather than computed: analysis placed at the correct index under a deliberately wrong P (TA1B at P001, true P016) was NOT found -- the player re-analysed and wrote its own at P016"
+  ],
+  "_P_conclusion": "P is computed from the path and is not linear in the characters. It is not stored anywhere (analyze_path is ignored; USBMNG holds only the ANLZ file number), so the player must re-derive it on every read. Writing all 128 P000-P07F folders at the computed index is confirmed working and remains the correct workaround; ui/duckbox-learn pins the real folder per track afterwards to drop the 128x storage cost."
 }
