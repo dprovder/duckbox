@@ -135,3 +135,75 @@ Carries must be resolved when combining measurements: an observation only fixes
 delta, and the true weight is the intersection across measurements. Probes using
 characters *below* the reference (negative deltas) shift the carry pattern and
 resolve ties that same-direction probes cannot.
+
+---
+
+# Confirmed on hardware (CDJ-2000NXS)
+
+Everything above concerns *where* the analysis goes. Getting a CDJ to actually
+render it needed two more fixes, both verified on a player: our beat grid, cue
+points and both waveforms now display from a duck-only export, with no rekordbox
+anywhere in the pipeline.
+
+## 1. PPTH must be NUL-terminated (this was the blocker)
+
+`PPTH`'s length field counts a UTF-16 NUL terminator. We declared `len*2 + 2`
+and then wrote only `len*2` bytes:
+
+```
+ours   PPTH tag_total=52  declared_len=38  actual_payload=36   <-- 2 bytes short
+real   PPTH tag_total=54  declared_len=38  actual_payload=38
+deck   PPTH tag_total=54  declared_len=38  actual_payload=38
+```
+
+A CDJ reads exactly `declared_len` bytes, so it consumed the first two bytes of
+the *next* tag header, `PVBR` became `PV??`, and the tag chain derailed. The
+player discards the whole file and re-analyses the track, writing its own
+`ANLZ0001` (then `ANLZ0002`, ...) into the folder beside ours.
+
+The symptom set is distinctive and worth recognising, because none of it points
+at PPTH directly:
+
+- macro waveform is **computed live as the track plays** instead of appearing on
+  load — the stored `PWAV` was never reached,
+- micro/scrolling waveform stays blank — `PWV3` in the `.EXT` was never reached,
+- no beat grid,
+- a new `ANLZ####` appears next to ours after every load.
+
+If the macro waveform draws in during playback, the player is not reading the
+file at all; look at parsing before looking at content.
+
+## 2. PWV3 whiteness
+
+Each `PWV3` byte is `(whiteness << 5) | height`. Deriving whiteness from the
+high band's absolute share of energy puts bass-heavy material at 0-1, and the
+player draws the detail waveform near-black on black — present, correctly
+located, invisible. Real exports sit at 6-7 for most of a track. `WhitenessSeries()`
+ranks each column against the rest of its own track and maps it onto the measured
+distribution. See `anlz_writer.cpp`.
+
+## 3. The player does compute the folder, but P need not be solved
+
+Measured directly: for `/Contents/TE3F.mp3` the player independently chose
+`P014/00000378`, and for `/Contents/TC2D.mp3` `P045/00011063` — both indices
+exactly as predicted by the constants in `anlz_index.json`. So the index half is
+solved and confirmed against hardware.
+
+`P` remains an unsolved second hash (not a function of the index or of the raw
+32-bit hash; searched every shift 0-31 against moduli 2-400). It does not need
+solving: writing the analysis into all 128 `P000`-`P07F` folders at the computed
+index covers whichever the player picks, and that is confirmed working. Cost is
+~61 KB x 128 per track, so prefer the exact folder when it is known.
+
+`ui/duckbox-learn` recovers the exact folder from a player that has analysed a
+track, and caches it in `ui/anlz-folders.json`. That path also sidesteps the
+index computation entirely, which is what makes arbitrary (non-`Txxx`) filenames
+work.
+
+## 4. USBMNG.DAT is a slot table
+
+`offset = 53 + 2*index`, u16 little-endian, holding which `ANLZ####` file is
+current for that index. It reads as all-zero on a normal drive because everything
+sits in slot 0. A player that analyses a track sets its slot: after it wrote
+`ANLZ0001` for index 888, byte 1829 went `00 -> 01`, and `(1829-53)/2 = 888`.
+Preserve any existing USBMNG.DAT when rewriting a drive.

@@ -90,13 +90,58 @@ uint8_t Whiteness(double low, double mid, double high) {
 	return (uint8_t)std::clamp(w, 0, 7);
 }
 
+// The absolute high-band share is the wrong scale for this field. Bass-heavy
+// material puts 10-15% of its energy above the crossover, so Whiteness() maps
+// nearly every column to 0-1 and a CDJ draws the detail waveform almost black
+// on black -- present, correctly located, and invisible. Real exports sit at
+// 6-7 for most of a track (measured over a CDJ-written USB):
+//
+//     w        0     1     2     3     4     5     6     7
+//     share  .063  .054  .063  .073  .070  .110  .231  .337
+//
+// Rank each column against the rest of its own track and place it in that
+// distribution, so the shape comes from relative brightness and the levels
+// come from real hardware. Self-normalising, so it survives any band scaling.
+std::vector<uint8_t> WhitenessSeries(const std::vector<uint8_t> &lo, const std::vector<uint8_t> &mi,
+                                     const std::vector<uint8_t> &hi) {
+	static const double kCdf[8] = {0.0627, 0.1171, 0.1799, 0.2524, 0.3220, 0.4321, 0.6631, 1.0};
+	size_t n = std::min({lo.size(), mi.size(), hi.size()});
+	std::vector<double> share(n);
+	std::vector<size_t> order;
+	order.reserve(n);
+	// Silence carries no brightness to rank. Real exports write 0xe0 there
+	// (whiteness 7, height 0), so hand those columns 7 and rank the rest.
+	std::vector<uint8_t> out(n, 7);
+	for (size_t i = 0; i < n; i++) {
+		double tot = (double)lo[i] + mi[i] + hi[i];
+		if (tot <= 0) continue;
+		share[i] = ((double)mi[i] + hi[i]) / tot;
+		order.push_back(i);
+	}
+	std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return share[a] < share[b]; });
+	size_t m = order.size();
+	for (size_t r = 0; r < m; r++) {
+		double pct = m > 1 ? (double)r / (double)(m - 1) : 1.0;
+		int w = 0;
+		while (w < 7 && pct > kCdf[w]) w++;
+		out[order[r]] = (uint8_t)w;
+	}
+	return out;
+}
+
 //===--------------------------------------------------------------------===//
 // Tag bodies
 //===--------------------------------------------------------------------===//
 std::string BuildPath(const std::string &path) {
 	BE body;
+	// The length counts a UTF-16 NUL terminator, so one has to be written: a
+	// CDJ reads exactly this many bytes, and without the NUL it runs two bytes
+	// into the next tag header, derails the parse and throws the whole file
+	// away -- it then re-analyses the track and writes its own ANLZ beside
+	// ours. Real exports and CDJ-written files both end 00 00 here.
 	body.u4((uint32_t)(path.size() * 2 + 2));
 	body.utf16be(path);
+	body.u2(0);
 	return body.b;
 }
 
@@ -156,8 +201,9 @@ std::string BuildMonoDetail(const std::vector<uint8_t> &h, const std::vector<uin
 	body.u4(1);            // len_entry_bytes
 	body.u4((uint32_t)n);  // len_entries
 	body.u4(0x00960000);   // unknown
+	auto white = WhitenessSeries(lo, mi, hi);
 	for (int c = 0; c < n; c++) {
-		uint8_t w = Whiteness(lo[c], mi[c], hi[c]);
+		uint8_t w = c < (int)white.size() ? white[c] : 0;
 		int hh = (int)std::lround(h[c] * WAVE_GAIN);
 		body.u1((uint8_t)((w << 5) | (std::clamp(hh, 0, 31) & 0x1f)));
 	}

@@ -1,0 +1,206 @@
+{
+  "_comment": "Constants for the CDJ analysis-folder index. See ANLZ_PATH.md.",
+  "modulus": 200003,
+  "word": 4294967296,
+  "index_formula": "index = ((H0 + sum(ord(c_i) * W_i)) mod 2**32) mod 200003, i = offset from END of the USB-relative filename, 0-based",
+  "exact_32bit": {
+    "_scope": "valid for names of the form T<c6><c5><c4>.mp3 -- H0 absorbs the fixed 'T' and '.mp3'",
+    "H0_candidates": [
+      4168909456,
+      4169109459,
+      4169309462,
+      4169509465,
+      4169709468
+    ],
+    "_H0_note": "all reproduce the 40 observations and agree on every prediction tried; any one may be used",
+    "W4": 223688027,
+    "W5": 1674353160,
+    "W6": 2093151154
+  },
+  "weights_mod_200003": {
+    "4": 84673,
+    "5": 128047,
+    "6": 119759,
+    "7": 142065,
+    "8": 103380,
+    "9": 172628,
+    "10": 110359,
+    "11": 10281,
+    "12": 194214,
+    "13": 161890,
+    "14": 41273,
+    "15": 184536,
+    "16": 157977,
+    "17": 158186,
+    "18": 50320,
+    "19": 64015,
+    "21": 127140,
+    "23": 31025,
+    "25": 100387,
+    "27": 31896
+  },
+  "_weights_note": "end-offsets 4..19,21,23,25,27 known only mod 200003; 32-bit values needed to compute carries for arbitrary-length names",
+  "samples": {
+    "T002": {
+      "P": 37,
+      "index": 145761
+    },
+    "T030": {
+      "P": 39,
+      "index": 57679
+    },
+    "T003": {
+      "P": 63,
+      "index": 30431
+    },
+    "T456": {
+      "P": 63,
+      "index": 192213
+    },
+    "T789": {
+      "P": 100,
+      "index": 81016
+    },
+    "T200": {
+      "P": 105,
+      "index": 113059
+    },
+    "T020": {
+      "P": 117,
+      "index": 129635
+    },
+    "T300": {
+      "P": 120,
+      "index": 129944
+    },
+    "T000": {
+      "P": 32,
+      "index": 176418
+    },
+    "T001": {
+      "P": 56,
+      "index": 61088
+    },
+    "T010": {
+      "P": 66,
+      "index": 104462
+    },
+    "T100": {
+      "P": 51,
+      "index": 193303
+    },
+    "T123": {
+      "P": 95,
+      "index": 103407
+    },
+    "T0A0": {
+      "P": 1,
+      "index": 33075
+    },
+    "T0N0": {
+      "P": 3,
+      "index": 183301
+    },
+    "T00G": {
+      "P": 17,
+      "index": 20993
+    },
+    "T0G0": {
+      "P": 33,
+      "index": 195603
+    },
+    "TU00": {
+      "P": 36,
+      "index": 155730
+    },
+    "TN00": {
+      "P": 43,
+      "index": 26045
+    },
+    "TZ00": {
+      "P": 53,
+      "index": 45897
+    },
+    "T050": {
+      "P": 56,
+      "index": 10896
+    },
+    "T500": {
+      "P": 65,
+      "index": 66585
+    },
+    "T005": {
+      "P": 69,
+      "index": 199777
+    },
+    "TG00": {
+      "P": 87,
+      "index": 199237
+    },
+    "T00A": {
+      "P": 102,
+      "index": 112964
+    },
+    "T0U0": {
+      "P": 106,
+      "index": 73870
+    },
+    "T00N": {
+      "P": 108,
+      "index": 110824
+    },
+    "T0Z0": {
+      "P": 115,
+      "index": 108351
+    },
+    "T00Z": {
+      "P": 123,
+      "index": 126885
+    },
+    "T5UN": {
+      "P": 3,
+      "index": 1317
+    },
+    "TGAZ": {
+      "P": 13,
+      "index": 6361
+    },
+    "TNZG": {
+      "P": 14,
+      "index": 2556
+    },
+    "TN5U": {
+      "P": 15,
+      "index": 187637
+    },
+    "TGUN": {
+      "P": 39,
+      "index": 31095
+    },
+    "TZ0Z": {
+      "P": 51,
+      "index": 196367
+    },
+    "TZZ0": {
+      "P": 57,
+      "index": 177833
+    },
+    "TZZZ": {
+      "P": 98,
+      "index": 128300
+    },
+    "TZN5": {
+      "P": 101,
+      "index": 76139
+    },
+    "TUGZ": {
+      "P": 110,
+      "index": 125382
+    }
+  },
+  "deck_observed_P": {
+    "TE3F.mp3": 20,
+    "TC2D.mp3": 69
+  },
+  "_P_note": "P folder is a second, unsolved hash. Not a function of the index or of the raw 32-bit hash (searched shifts 0-31 x moduli 2-400)."
+}
