@@ -4,7 +4,7 @@
   "word": 4294967296,
   "index_formula": "index = ((H0 + sum(ord(c_i) * W_i)) mod 2**32) mod 200003, i = offset from END of the USB-relative filename, 0-based",
   "exact_32bit": {
-    "_scope": "valid for names of the form T<c6><c5><c4>.mp3 -- H0 absorbs the fixed 'T' and '.mp3'",
+    "_scope": "H0 is only ever pinned to a residue class mod 200003; candidates form a contiguous arithmetic progression of step 200003. Listed as (first, count).",
     "H0_candidates": [
       4168909456,
       4169109459,
@@ -202,5 +202,51 @@
     "TE3F.mp3": 20,
     "TC2D.mp3": 69
   },
-  "_P_note": "P folder is a second, unsolved hash. Not a function of the index or of the raw 32-bit hash (searched shifts 0-31 x moduli 2-400)."
+  "_P_note": "P folder is a second, unsolved hash. Not a function of the index or of the raw 32-bit hash (searched shifts 0-31 x moduli 2-400).",
+  "templates": {
+    ".mp3": {
+      "h0_first": 4168909456,
+      "h0_count": 5,
+      "samples": 39,
+      "max_distinct_predictions": 1
+    },
+    ".m4a": {
+      "h0_first": 413542313,
+      "h0_count": 6414,
+      "samples": 7,
+      "max_distinct_predictions": 2,
+      "_note": "unanimous on ~2/3 of names; write both candidate indices for the rest"
+    }
+  },
+  "m4a_samples": {
+    "TC3J.m4a": {
+      "index": 194995,
+      "P": 41
+    },
+    "TF8L.m4a": {
+      "index": 152345,
+      "P": 17
+    },
+    "T0Z0.m4a": {
+      "index": 197539,
+      "P": 89
+    },
+    "T000.m4a": {
+      "index": 168477,
+      "P": 19
+    },
+    "TB4X.m4a": {
+      "index": 85813,
+      "P": 83
+    },
+    "T9W2.m4a": {
+      "index": 151944,
+      "P": 8
+    },
+    "TQ7M.m4a": {
+      "index": 111938,
+      "P": 100
+    }
+  },
+  "_why_wide": "Intersecting observations cannot narrow H0 below its residue class: candidates are an arithmetic progression of step 200003, so only a sample straddling a 2**32 wrap discriminates. .mp3 took 39 samples to reach 5 candidates; .m4a has 7 and sits at 6414. Writing every distinct predicted index (at most 2, measured over the whole namespace) makes this immaterial."
 }

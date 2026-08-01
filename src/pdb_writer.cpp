@@ -329,9 +329,12 @@ std::string BuildPdb(std::vector<RbTrack> &tracks,
 		// derive. When the index is not computable for this filename, fall back
 		// to a per-id folder: the pdb and audio are still correct, and
 		// ui/duckbox-learn repoints it once a player has chosen a folder.
-		uint32_t anlz_index = 0;
-		if (anlz::IndexFor(t.content_path, anlz_index)) {
-			std::snprintf(buf, sizeof(buf), "/PIONEER/USBANLZ/P040/%08X/ANLZ0000.DAT", anlz_index);
+		uint32_t cand[2];
+		if (anlz::IndexCandidates(t.content_path, cand) > 0) {
+			// Any candidate will do here: the player derives the folder itself and
+			// every candidate is written, so analyze_path only has to name one that
+			// exists on the drive.
+			std::snprintf(buf, sizeof(buf), "/PIONEER/USBANLZ/P040/%08X/ANLZ0000.DAT", cand[0]);
 		} else {
 			std::snprintf(buf, sizeof(buf), "/PIONEER/USBANLZ/P%03u/%08X/ANLZ0000.DAT", t.id % 1000, t.id);
 		}
@@ -693,21 +696,22 @@ static void RbFinalize(ClientContext &, FunctionData &, GlobalFunctionData &gsta
 		if (!t.wf_height.empty()) {
 			ext = BuildAnlzExtBytes(t.content_path, t.wf_height, t.wf_low, t.wf_mid, t.wf_high, t.cues);
 		}
-		uint32_t anlz_index = 0;
-		bool computable = anlz::IndexFor(t.content_path, anlz_index);
-		int folders = computable ? anlz::kPFolders : 1;
-		for (int p = 0; p < folders; p++) {
-			char dir[80];
-			if (computable) {
-				std::snprintf(dir, sizeof(dir), "PIONEER/USBANLZ/P%03X/%08X", p, anlz_index);
-			} else {
-				std::snprintf(dir, sizeof(dir), "PIONEER/USBANLZ/P%03u/%08X", t.id % 1000, t.id);
-			}
-			auto d = fs::path(gs.usb_root) / dir;
-			fs::create_directories(d, ec);
-			std::ofstream(d / "ANLZ0000.DAT", std::ios::binary).write(dat.data(), (std::streamsize)dat.size());
-			if (!ext.empty()) {
-				std::ofstream(d / "ANLZ0000.EXT", std::ios::binary).write(ext.data(), (std::streamsize)ext.size());
+		uint32_t cand[2];
+		int ncand = anlz::IndexCandidates(t.content_path, cand);
+		for (int c = 0; c < (ncand ? ncand : 1); c++) {
+			for (int p = 0; p < (ncand ? anlz::kPFolders : 1); p++) {
+				char dir[80];
+				if (ncand) {
+					std::snprintf(dir, sizeof(dir), "PIONEER/USBANLZ/P%03X/%08X", p, cand[c]);
+				} else {
+					std::snprintf(dir, sizeof(dir), "PIONEER/USBANLZ/P%03u/%08X", t.id % 1000, t.id);
+				}
+				auto d = fs::path(gs.usb_root) / dir;
+				fs::create_directories(d, ec);
+				std::ofstream(d / "ANLZ0000.DAT", std::ios::binary).write(dat.data(), (std::streamsize)dat.size());
+				if (!ext.empty()) {
+					std::ofstream(d / "ANLZ0000.EXT", std::ios::binary).write(ext.data(), (std::streamsize)ext.size());
+				}
 			}
 		}
 	}
