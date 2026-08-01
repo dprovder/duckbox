@@ -47,6 +47,7 @@ struct RbTrack {
 	std::vector<std::pair<std::string, int>> playlists;  // (playlist name, sort)
 	// assigned during build:
 	uint32_t id = 0, artist_id = 0, album_id = 0, genre_id = 0, label_id = 0, key_id = 0, color_id = 0, artwork_id = 0;
+	int32_t anlz_p = -1;       // known P folder (from ui/anlz-folders.json); -1 = unknown
 	std::string analyze_path;  // /PIONEER/USBANLZ/Pxxx/xxxxxxxx/ANLZ0000.DAT
 	std::string content_path;  // /Contents/<file> — USB-relative audio path (file_path in the pdb)
 };
@@ -331,10 +332,11 @@ std::string BuildPdb(std::vector<RbTrack> &tracks,
 		// ui/duckbox-learn repoints it once a player has chosen a folder.
 		uint32_t cand[2];
 		if (anlz::IndexCandidates(t.content_path, cand) > 0) {
-			// Any candidate will do here: the player derives the folder itself and
-			// every candidate is written, so analyze_path only has to name one that
-			// exists on the drive.
-			std::snprintf(buf, sizeof(buf), "/PIONEER/USBANLZ/P040/%08X/ANLZ0000.DAT", cand[0]);
+			// The player derives the folder itself and ignores this, so it only has
+			// to name one that exists on the drive: the known P when we have it,
+			// otherwise any of the 128 written below.
+			int pf = (t.anlz_p >= 0 && t.anlz_p < anlz::kPFolders) ? t.anlz_p : 0x40;
+			std::snprintf(buf, sizeof(buf), "/PIONEER/USBANLZ/P%03X/%08X/ANLZ0000.DAT", pf, cand[0]);
 		} else {
 			std::snprintf(buf, sizeof(buf), "/PIONEER/USBANLZ/P%03u/%08X/ANLZ0000.DAT", t.id % 1000, t.id);
 		}
@@ -617,6 +619,11 @@ static void RbSink(ExecutionContext &, FunctionData &bind, GlobalFunctionData &g
 		t.track_number = (int32_t)D("track_number", r);
 		t.year = (int32_t)D("year", r);
 		t.rating = (int32_t)D("rating", r);
+		// A player derives the P folder from the path by some hash we have not
+		// solved, so with P unknown the analysis is written to all 128 candidates.
+		// Supplying the folder a player was previously seen to use collapses that
+		// to one -- see ui/duckbox-learn, which harvests and caches it.
+		t.anlz_p = bd.col.count("anlz_p") ? (int32_t)D("anlz_p", r) : -1;
 		t.file_type = FileTypeFromPath(t.file_path);
 		// Real rekordbox never writes file_size/bitrate/sample_rate as 0; a CDJ
 		// treats a zero-size track as a missing file and hides it from browse.
@@ -698,8 +705,13 @@ static void RbFinalize(ClientContext &, FunctionData &, GlobalFunctionData &gsta
 		}
 		uint32_t cand[2];
 		int ncand = anlz::IndexCandidates(t.content_path, cand);
+		// With the P folder known there is exactly one place to write; without it,
+		// every candidate P. 128 copies of the analysis is ~8 MB a track, so a
+		// library wants ui/duckbox-learn to supply anlz_p and collapse this.
+		bool p_known = t.anlz_p >= 0 && t.anlz_p < anlz::kPFolders;
 		for (int c = 0; c < (ncand ? ncand : 1); c++) {
-			for (int p = 0; p < (ncand ? anlz::kPFolders : 1); p++) {
+			for (int pi = 0; pi < (ncand && !p_known ? anlz::kPFolders : 1); pi++) {
+				int p = p_known ? t.anlz_p : pi;
 				char dir[80];
 				if (ncand) {
 					std::snprintf(dir, sizeof(dir), "PIONEER/USBANLZ/P%03X/%08X", p, cand[c]);
