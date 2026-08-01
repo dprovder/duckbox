@@ -1,0 +1,101 @@
+#!/bin/zsh
+# duckbox-inject — put YOUR analysis (beat grid, cue points, waveform) onto a
+# rekordbox-exported USB.
+#
+#   ui/duckbox-inject /Volumes/YOUR_USB [library.duckdb]
+#
+# Export from rekordbox as usual, then run this. It reads rekordbox's export.pdb,
+# matches each track to your library by filename, regenerates the analysis from
+# your own beat grid and cue points, and overwrites the ANLZ files in place.
+#
+# Why it works: the player locates a track's analysis by computing a folder from
+# the file path rather than reading analyze_path (see ext-rekordbox/docs/ANLZ_PATH.md).
+# rekordbox's own analyze_path *is* that computed folder, so writing there is correct.
+set -e
+ROOT=${0:a:h:h}
+USB=${1:?usage: duckbox-inject /Volumes/USB [library.duckdb]}
+DB=${2:-$ROOT/library.duckdb}
+DUCK=$ROOT/ext-rekordbox/build/release/duckdb
+[[ -f $USB/PIONEER/rekordbox/export.pdb ]] || { print -u2 "no export.pdb on $USB — export from rekordbox first"; exit 1; }
+[[ -f $DB ]]   || { print -u2 "no library at $DB"; exit 1; }
+[[ -x $DUCK ]] || { print -u2 "extension not built — see ext-rekordbox/BUILD.md"; exit 1; }
+
+python3 - "$USB" "$DB" "$DUCK" <<'PY'
+import sys, os, subprocess
+USB, DB, DUCK = sys.argv[1:4]
+PAGE, HEAP = 4096, 0x28
+u = lambda d, o, n: int.from_bytes(d[o:o+n], 'little')
+
+def getstr(r, i):
+    o = u(r, 0x5e + 2*i, 2); k = r[o]
+    if k & 1:
+        return bytes(r[o+1:o+1+(k >> 1)-1]).decode('ascii', 'replace')
+    ln = u(r, o+1, 2)
+    return bytes(r[o+4:o+ln]).decode('utf-16-le' if k == 0x90 else 'ascii', 'replace')
+
+def tracks(pdb):
+    d = open(pdb, 'rb').read(); po = 0x1c
+    for _ in range(u(d, 8, 4)):
+        if u(d, po, 4) == 0:
+            first, last = u(d, po+8, 4), u(d, po+12, 4); break
+        po += 16
+    out, pi = [], first
+    for _ in range(4000):
+        b = d[pi*PAGE:(pi+1)*PAGE]
+        if not (b[0x1b] & 0x40):
+            nro = u(b, 0x18, 3) & 0x1fff
+            used = u(b, 0x1e, 2)
+            offs = []
+            for g in range((nro + 15)//16):
+                base = PAGE - g*0x24
+                pres = u(b, base-4, 2)
+                for j in range(16):
+                    if g*16 + j < nro and (pres >> j) & 1:
+                        offs.append(u(b, base-6-2*j, 2))
+            offs.sort()
+            for k, off in enumerate(offs):
+                end = offs[k+1] if k+1 < len(offs) else used
+                r = bytes(b[HEAP+off:HEAP+end])
+                out.append((getstr(r, 19), getstr(r, 20), getstr(r, 14)))
+        if pi == last: break
+        pi = u(b, 0x0c, 4)
+    return out
+
+def q(sql):
+    r = subprocess.run([DUCK, DB, '-noheader', '-list', '-c', sql],
+                       capture_output=True, text=True)
+    if r.returncode:
+        raise RuntimeError(r.stderr.strip()[:300])
+    return r.stdout.strip()
+
+rows = tracks(os.path.join(USB, 'PIONEER/rekordbox/export.pdb'))
+print(f"{len(rows)} tracks in rekordbox's database\n")
+done = skipped = 0
+for filename, file_path, analyze_path in rows:
+    if not analyze_path.startswith('/PIONEER'):
+        skipped += 1
+        continue
+    esc = filename.replace("'", "''")
+    pos = q(f"SELECT pos FROM track_analysis WHERE filename = '{esc}' LIMIT 1")
+    if not pos:
+        print(f"  skip  {filename[:56]}   (not in your library)")
+        skipped += 1
+        continue
+    fp = file_path.replace("'", "''")
+    dest = os.path.join(USB, os.path.dirname(analyze_path).lstrip('/'))
+    os.makedirs(dest, exist_ok=True)
+    for name, expr in (
+        ('ANLZ0000.DAT', f"rb_anlz_dat('{fp}', t.beats, t.bpm, t.downbeat_index, w.height, w.low, w.mid, w.high)"),
+        ('ANLZ0000.EXT', f"rb_anlz_ext('{fp}', w.height, w.low, w.mid, w.high)"),
+    ):
+        hexed = q(f"SELECT hex({expr}) FROM track_analysis t JOIN waveform w USING(pos) WHERE t.pos = '{pos}'")
+        if not hexed:
+            continue
+        with open(os.path.join(dest, name), 'wb') as fh:
+            fh.write(bytes.fromhex(hexed))
+    print(f"  ok    {filename[:56]}   ->  {os.path.dirname(analyze_path).split('USBANLZ/')[-1]}")
+    done += 1
+print(f"\n{done} tracks now carry your analysis; {skipped} skipped")
+PY
+sync
+print "\ndone — eject the drive and load it on the player"
