@@ -71,7 +71,8 @@ std::string TrackRow(const RbTrack &t) {
 	LE h;
 	h.u2(0x24);                        // 00 subtype
 	h.u2(0);                           // 02 index_shift
-	h.u4(0);                           // 04 bitmask
+	// Modern rekordbox writes 0xC0700 here; we wrote 0 (copied from a 2014 export).
+	h.u4(0x000C0700);                  // 04 bitmask
 	h.u4(t.sample_rate ? (uint32_t)t.sample_rate : 44100); // 08 sample_rate (rekordbox never writes 0)
 	h.u4(0);                           // 0c composer_id
 	h.u4((uint32_t)t.file_size);       // 10 file_size
@@ -107,8 +108,10 @@ std::string TrackRow(const RbTrack &t) {
 	// 21 strings (index -> field). Offsets are relative to row_base.
 	std::string strs[21];
 	for (auto &s : strs) s = ""; // default empty
-	strs[2] = "4";               // unknown_string_2 — real exports always have a small digit
-	strs[3] = "\x01";            // unknown_string_3 — constant 0x01 in every real row
+	// Analysis flags: "1" = not analysed, "2" = analysed (confirmed against a
+	// rekordbox 7 export made with Key on and Phrase off, which wrote "2" and "1").
+	strs[2] = "2";               // key analysed
+	strs[3] = "1";               // phrase analysis not performed
 	strs[6] = "ON";              // publish/kuvo
 	strs[7] = "ON";              // autoload_hot_cues
 	strs[10] = "2025-01-01";     // date_added (rekordbox always writes a YYYY-MM-DD)
