@@ -446,7 +446,9 @@ std::string BuildPdb(std::vector<RbTrack> &tracks,
 	hput(4, PAGE, 4);
 	hput(8, 20, 4);
 	hput(12, total_pages, 4); // next_unused_page
-	hput(16, 0, 4);
+	// Never 0 in any real export (observed 1, 4 or 5 across six files); readers
+	// ignore this field but the player appears to require it.
+	hput(16, 1, 4);
 	hput(20, 1, 4);           // sequence
 	uint32_t po = 0x1c;
 	for (size_t i = 0; i < tps.size(); i++) {
