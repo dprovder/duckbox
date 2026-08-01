@@ -28,6 +28,7 @@
 #include "pdb_static_tables.inc"
 #include "pdb_companion.inc"     // MYSETTING.DAT bytes  // track-independent tables (columns/colors/…)
 #include "pdb_bytes.hpp"
+#include "anlz_index.hpp"
 
 namespace duckdb {
 
@@ -321,11 +322,20 @@ std::string BuildPdb(std::vector<RbTrack> &tracks,
 		t.genre_id = intern(genres, t.genre);
 		t.label_id = intern(labels, t.label);
 		t.key_id = intern(keys, t.key);
-		char buf[80];
-		std::snprintf(buf, sizeof(buf), "/PIONEER/USBANLZ/P%03u/%08X/ANLZ0000.DAT", t.id % 1000, t.id);
-		t.analyze_path = buf;
 		t.content_path = "/Contents/" + t.filename;
-
+		char buf[80];
+		// A player computes the analysis folder from the file path and reads only
+		// what sits exactly there, so point analyze_path at the folder it will
+		// derive. When the index is not computable for this filename, fall back
+		// to a per-id folder: the pdb and audio are still correct, and
+		// ui/duckbox-learn repoints it once a player has chosen a folder.
+		uint32_t anlz_index = 0;
+		if (anlz::IndexFor(t.content_path, anlz_index)) {
+			std::snprintf(buf, sizeof(buf), "/PIONEER/USBANLZ/P040/%08X/ANLZ0000.DAT", anlz_index);
+		} else {
+			std::snprintf(buf, sizeof(buf), "/PIONEER/USBANLZ/P%03u/%08X/ANLZ0000.DAT", t.id % 1000, t.id);
+		}
+		t.analyze_path = buf;
 	}
 
 	// Table rows (20 tables, type == index).
@@ -672,18 +682,33 @@ static void RbFinalize(ClientContext &, FunctionData &, GlobalFunctionData &gsta
 			fs::create_directories(dst.parent_path(), ec);
 			fs::copy_file(t.file_path, dst, fs::copy_options::overwrite_existing, ec);
 		}
-		// 2. ANLZ .DAT (+ .EXT) where analyze_path points; PPTH = the /Contents/ path.
-		char dir[80];
-		std::snprintf(dir, sizeof(dir), "PIONEER/USBANLZ/P%03u/%08X", t.id % 1000, t.id);
-		auto d = fs::path(gs.usb_root) / dir;
-		fs::create_directories(d, ec);
+		// 2. ANLZ .DAT (+ .EXT) where the player will look for them. The index
+		//    half of that address is solved; the P half is not, so write every
+		//    P000-P07F variant and let the player pick -- confirmed on hardware.
+		//    Falls back to one per-id folder when the index is not computable.
 		if (t.beats.empty()) continue; // no analysis provided -> pdb + audio only
 		std::string dat = BuildAnlzDatBytes(t.content_path, t.beats, t.bpm, t.downbeat,
 		                                    t.wf_height, t.wf_low, t.wf_mid, t.wf_high, t.cues);
-		std::ofstream(d / "ANLZ0000.DAT", std::ios::binary).write(dat.data(), (std::streamsize)dat.size());
+		std::string ext;
 		if (!t.wf_height.empty()) {
-			std::string ext = BuildAnlzExtBytes(t.content_path, t.wf_height, t.wf_low, t.wf_mid, t.wf_high, t.cues);
-			std::ofstream(d / "ANLZ0000.EXT", std::ios::binary).write(ext.data(), (std::streamsize)ext.size());
+			ext = BuildAnlzExtBytes(t.content_path, t.wf_height, t.wf_low, t.wf_mid, t.wf_high, t.cues);
+		}
+		uint32_t anlz_index = 0;
+		bool computable = anlz::IndexFor(t.content_path, anlz_index);
+		int folders = computable ? anlz::kPFolders : 1;
+		for (int p = 0; p < folders; p++) {
+			char dir[80];
+			if (computable) {
+				std::snprintf(dir, sizeof(dir), "PIONEER/USBANLZ/P%03X/%08X", p, anlz_index);
+			} else {
+				std::snprintf(dir, sizeof(dir), "PIONEER/USBANLZ/P%03u/%08X", t.id % 1000, t.id);
+			}
+			auto d = fs::path(gs.usb_root) / dir;
+			fs::create_directories(d, ec);
+			std::ofstream(d / "ANLZ0000.DAT", std::ios::binary).write(dat.data(), (std::streamsize)dat.size());
+			if (!ext.empty()) {
+				std::ofstream(d / "ANLZ0000.EXT", std::ios::binary).write(ext.data(), (std::streamsize)ext.size());
+			}
 		}
 	}
 }
