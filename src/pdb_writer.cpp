@@ -25,7 +25,8 @@
 #include <string>
 #include <vector>
 
-#include "pdb_static_tables.inc"  // track-independent tables (columns/colors/…)
+#include "pdb_static_tables.inc"
+#include "pdb_companion.inc"     // MYSETTING.DAT bytes  // track-independent tables (columns/colors/…)
 #include "pdb_bytes.hpp"
 
 namespace duckdb {
@@ -321,6 +322,7 @@ std::string BuildPdb(std::vector<RbTrack> &tracks,
 		std::snprintf(buf, sizeof(buf), "/PIONEER/USBANLZ/P%03u/%08X/ANLZ0000.DAT", t.id % 1000, t.id);
 		t.analyze_path = buf;
 		t.content_path = "/Contents/" + t.filename;
+
 	}
 
 	// Table rows (20 tables, type == index).
@@ -630,6 +632,24 @@ static void RbFinalize(ClientContext &, FunctionData &, GlobalFunctionData &gsta
 	namespace fs = std::filesystem;
 	fs::create_directories(fs::path(gs.usb_root) / "PIONEER" / "rekordbox");
 	fs::create_directories(fs::path(gs.usb_root) / "PIONEER" / "USBANLZ");
+	// A real export also carries these; players expect the full skeleton.
+	fs::create_directories(fs::path(gs.usb_root) / "PIONEER" / "Artwork");
+	fs::create_directories(fs::path(gs.usb_root) / "PIONEER" / "CDJ");
+	fs::create_directories(fs::path(gs.usb_root) / "PIONEER" / "MPJ");
+	{
+		auto msp = fs::path(gs.usb_root) / "PIONEER" / "MYSETTING.DAT";
+		std::ofstream(msp, std::ios::binary)
+		    .write((const char *)MYSETTING_DAT, (std::streamsize)sizeof(MYSETTING_DAT));
+		// USBMNG.DAT: PMNG header + PTBL header over a 200003-entry slot table.
+		std::string mng(400058, '\0');
+		auto be = [&](size_t o, uint32_t v, int n) {
+			for (int i = 0; i < n; i++) mng[o + i] = (char)((v >> (8 * (n - 1 - i))) & 0xff);
+		};
+		mng.replace(0, 4, "PMNG"); be(4, 0x20, 4); be(8, 400058, 4); be(12, 1, 4);
+		mng.replace(32, 4, "PTBL"); be(36, 0x14, 4); be(40, 400026, 4); be(44, 2, 4); be(48, 200003, 4);
+		std::ofstream(fs::path(gs.usb_root) / "PIONEER" / "USBANLZ" / "USBMNG.DAT", std::ios::binary)
+		    .write(mng.data(), (std::streamsize)mng.size());
+	}
 	std::vector<std::pair<std::string, std::string>> art_files;
 	std::string pdb = BuildPdb(gs.tracks, art_files);
 	std::ofstream out(fs::path(gs.usb_root) / "PIONEER" / "rekordbox" / "export.pdb", std::ios::binary);
