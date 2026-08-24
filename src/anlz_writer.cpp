@@ -232,8 +232,43 @@ std::string BuildColorPreview(const std::vector<uint8_t> &h, const std::vector<u
 	return body.b;
 }
 
+// analyzer::WaveCreator::calcZoomWaveColour, lifted from rekordbox 7 (see
+// docs/REKORDBOX_BINARY.md). Its only caller is createColorWaveData, whose output
+// reaches MstStoreColorZoomWave, so this is the colour that gets STORED, not a
+// display-only tint. Inputs are the three band magnitudes in any consistent unit
+// -- everything is normalised by their maximum, so absolute scale cancels.
+void CalcZoomWaveColour(float low, float mid, float high, int &R, int &G, int &B) {
+	float mx = std::max(low, std::max(mid, high));
+	if (mx == 0.0f) { R = G = B = 255; return; } // silence renders white
+	float k = 255.0f / mx;
+	float b = std::clamp(high * k, 0.0f, 255.0f);
+	float r = low * k;
+	float g = mid * k;
+	// Where the high band is weak, pull down red and green together in proportion
+	// to their product -- this is what stops bass-heavy material turning muddy yellow.
+	if (b < 64.0f) {
+		float t = (g * (1.0f / 765.0f)) * r;   // 765 == 3*255
+		t = t * (b * (-1.0f / 64.0f)) + t;     // t * (1 - b/64)
+		r -= t;
+		g -= t;
+	}
+	// Green is attenuated by up to 30% by whichever of red/blue is louder,
+	// and blue is boosted 1.3x.
+	float m = std::min(std::max(r, b), 128.0f);
+	g = g * (-0.3f / 128.0f) * m + g;
+	b = b * 1.3f;
+	R = (int)std::clamp(r, 0.0f, 255.0f);      // fcvtzs truncates
+	G = (int)std::clamp(g, 0.0f, 255.0f);
+	B = (int)std::clamp(b, 0.0f, 255.0f);
+}
+
 // PWV5 color detail: 2 bytes/col at native 150/s. Big-endian bits:
 // red(3)<<13 | green(3)<<10 | blue(3)<<7 | height(5)<<2 | unused(2).
+// Confirmed against MstStoreColorZoomWave, which packs exactly these fields from
+// a 4-byte {r3,g3,b3,height5} element. The 8->3 bit reduction there is a plain
+// >>5; createColorWaveData additionally special-cases whichever channel is the
+// maximum, which is NOT yet decoded -- so colours may still differ slightly from
+// rekordbox for columns where one band dominates.
 std::string BuildColorDetail(const std::vector<uint8_t> &h, const std::vector<uint8_t> &lo,
                              const std::vector<uint8_t> &mi, const std::vector<uint8_t> &hi) {
 	int n = (int)h.size();
@@ -241,12 +276,13 @@ std::string BuildColorDetail(const std::vector<uint8_t> &h, const std::vector<ui
 	body.u4(2);
 	body.u4((uint32_t)n);
 	body.u4(0x00960305);
-	auto to3 = [](uint8_t v) { return (uint16_t)std::clamp((int)std::lround(v / 127.0 * 7.0), 0, 7); };
 	for (int c = 0; c < n; c++) {
 		// rekordbox maps red<-low/bass, blue<-high (verified vs test/reference/).
-		uint16_t red = to3(lo[c]);
-		uint16_t grn = to3(mi[c]);
-		uint16_t blu = to3(hi[c]);
+		int R, G, B;
+		CalcZoomWaveColour((float)lo[c], (float)mi[c], (float)hi[c], R, G, B);
+		uint16_t red = (uint16_t)(R >> 5);
+		uint16_t grn = (uint16_t)(G >> 5);
+		uint16_t blu = (uint16_t)(B >> 5);
 		uint16_t hgt = std::min<int>(h[c], 31);
 		body.u2((uint16_t)((red << 13) | (grn << 10) | (blu << 7) | (hgt << 2)));
 	}
