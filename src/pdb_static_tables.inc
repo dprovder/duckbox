@@ -1,4 +1,6 @@
-// Auto-extracted, track-independent pdb tables from a real rekordbox export
+// Auto-extracted, track-independent pdb tables from a real rekordbox export.
+// Types are, by DeviceSQL name (docs/PDB_TABLES.md): 6=DJDBCOLOR, 16=DJDBMENUITEMS,
+// 17=DJDBCATEGORY, 18=DJDBSORT, 19=DJDBPROPERTY (NOT history -- ST_HIST_* is misnamed)
 // (a CDJ-2000NXS-validated USB export). Byte-identical across exports. Do not edit by hand.
 // Regenerate: python3 scripts/extract_static_tables.py > src/pdb_static_tables.inc
 namespace {
