@@ -105,19 +105,31 @@ so columns dominated by one band may still differ slightly.
 `PPTH` + `PWV3` for CDJ-2000NXS compatibility, so `PWV5` — and therefore all of
 the above — is dead code until the colour tags are re-enabled for a CDJ-3000.
 
-## PWV3 whiteness — still not found, and it is not in msc_anlz
+## PWV3 whiteness — traced to a dead end, usefully
 
-`MstStoreZoomWave` only serialises. Its `ZoomWaveInfo` element is 16 bytes with
-height at `+0x08` and whiteness at `+0x0C`, packed as
-`(whiteness << 5) | (height & 0x1f)` — which confirms our byte layout but says
-nothing about where whiteness comes from.
+The chain, followed all the way down:
 
-It comes from a different engine: `BeatAnalyzer_1_0::BA_GetZoomWave(void*,
-BA_WaveInfo*)` and its `2_0` counterpart, reached via
-`analyzer::BALibWrapper::GetZoomWave`. Related entry points if picking this up:
-`CAnalyzerIF::load_blueZoomWave` (the mono/blue waveform path, which is exactly
-what PWV3 is) and `CAnalyzerIF::get_cdjZoomWaveColor`, which owns a static
-`cdjZoomWaveRGBTable`.
+| function | what it actually does |
+|---|---|
+| `MstStoreZoomWave` | serialises only. 16-byte element, height `+0x08`, whiteness `+0x0C`, packed `(whiteness << 5) \| (height & 0x1f)` |
+| `BALibWrapper::GetZoomWave` | version dispatch to `BeatAnalyzer_1_0` / `_2_0`, nothing else |
+| `BA_GetZoomWave` | widens **two int16 per column** (4-byte stride, `ld2.4h`) to two floats |
+| `Analyzer::getZoomWave` | a plain accessor: returns the buffer at `Analyzer+0x3b30`, count at `+0x3b2c` |
+
+So whiteness is **not** a post-hoc function of three band magnitudes that we can
+port. The BeatAnalyzer engine emits exactly two numbers per column — height and
+whiteness — as products of its own analysis pass, and everything downstream just
+moves them around.
+
+That reframes the problem rather than solving it. There is no formula to lift;
+matching rekordbox means matching the *distribution* its DSP produces, which is
+precisely what `WhitenessSeries()` already does by rank-mapping each column
+against its own track. The existing approach is the right shape, and improving it
+means better calibration data, not more disassembly.
+
+If someone does want the real thing, the tractable route is dynamic, not static:
+the buffer at `Analyzer+0x3b30` is a plain array with its count next to it, so
+observing it during an analysis run beats decompiling the pass that fills it.
 
 Also still open: `MstStoreWholeWave` for the overview waveform's height/colour
 gain, and the `ConvUSB_*` endian converters, each of which carries an exact
