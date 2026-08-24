@@ -6,137 +6,64 @@ the deck silently re-analyses the track on every load.
 
     /PIONEER/USBANLZ/P<xxx>/<NNNNNNNN>/ANLZ0000.DAT
 
-* `NNNNNNNN` is an index into a 200003-slot table inside `PIONEER/USBANLZ/USBMNG.DAT`
-  (`byte offset = 53 + 2*index`; the player marks a used slot with `0x0008` and keeps
-  a count at file offset 28).
-* `P<xxx>` is a separate, still-unsolved function. Observed values are always < 128.
+Both halves come from a single 32-bit hash of the track's USB-relative path,
+taken over its UTF-16 code units, two rounds per character:
 
-## The index function
+```
+h = 0                                   # uint32, wrapping
+for c in utf16(path):                   # e.g. "/Contents/TE3F.mp3"
+    h = h * 23497 + c
+    h = h * 37813 + c
 
-Determined empirically from 39 samples: files with controlled names were placed on a
-USB with no analysis, the deck was asked to analyse them, and the folders it created
-were read back.
+index = h mod 200003
+P     = bits 16, 13, 9, 7, 6, 2, 0 of index, packed in that order
+```
 
-    index(name) = ((H0 + c1*W6 + c2*W5 + c3*W4) mod 2^32) mod 200003
+That is the whole thing. `P` is not a second hash — it is seven bits gathered
+out of the index.
 
-for an 8-character name `T c1 c2 c3 . m p 3`, where each `c` is the character's
-value relative to `'0'` (0x30), and
+## Why it resisted black-box fitting
 
-    H0 = 0x93611680
-    W4 = 0x0D55355B   (character nearest the extension)
-    W5 = 0x63CC9A08
-    W6 = 0x7CC2F3B2
+Two reasons, and both are visible only once you have the code:
 
-Weights depend only on a character's position *from the end of the name* and are
-independent of file length, size and duration (verified with 30/60/90-second files).
+* **The double round.** Per character the recurrence is
+  `h*888492061 + c*37814`, not `h*M + c`. Every rolling-hash family was
+  searched in the `h*M + c` shape, so none of them could match, and the
+  per-position "weights" measured empirically were really the composite
+  `37814 * 888492061^k`.
+* **`P` is a bit scatter.** It was searched for as a shift or a modulus of the
+  index or of the raw 32-bit hash. Gathering non-adjacent bits 16, 13, 9, 7, 6,
+  2, 0 is neither, so `P` looked independent of the index it is entirely
+  derived from.
 
-### Why this was hard to see
+## Where it came from
 
-The sum is taken mod 2^32 and only then reduced mod 200003, so whenever adding a
-character's weight overflows 2^32 the observed index drops by `2^32 mod 200003 =
-102874`. Measuring the same character position in two different names therefore
-yields two different "weights" that differ by exactly that constant, which defeats
-any naive fit. It is not a polynomial rolling hash: an exhaustive search over all
-multiplier/scale pairs mod 2^32, and every standard hash family across encodings,
-found no match.
+`analyzer::CreateAnlzFileFolderPath` in the rekordbox 7 application binary
+(`/Applications/rekordbox 7/rekordbox.app/Contents/MacOS/rekordbox`), which
+ships unstripped: `nm` lists the symbol, and the hash is eleven instructions of
+straight-line ARM64. The reduction mod 200003 appears as the usual
+multiply-high-and-subtract (`0xA7C5075B`, `lsr #49`, `msub` by `0x30D43`), and
+the bit gather as a run of `lsr`/`and`/`orr` feeding `String::formattedRaw`.
 
-### Recovering the constants
+Confirmed two independent ways:
 
-Each sample only reveals `H mod 200003`, i.e. one part in 21475 of a 32-bit value,
-so the constants cannot be read off directly. Writing `H0 = h0 + a*P` (P = 200003)
-with `h0` the known residue, each sample instead pins a linear combination of the
-unknown multipliers to an interval of width `2^32/P`. Probes must use large
-character deltas (`0`..`Z`, multiplier 42) — stepping only `0`..`3` yields intervals
-so wide they carry almost no information.
+* it reproduces every address in `ui/anlz-folders.json` harvested from real
+  rekordbox exports — 36 of 37, the one holdout being a row whose declared
+  `analyze_path` already did not match what was on that drive;
+* it reproduces both folders a CDJ-2000NXS chose **on its own**, for names it
+  had never seen: `P014/00000378` for `/Contents/TE3F.mp3` and `P045/00011063`
+  for `/Contents/TC2D.mp3`. The player and rekordbox run the same function.
 
-21973 tuples satisfy all 39 constraints, but they agree on the predicted index for
-every unseen name, so the residual degeneracy is harmless.
+Implemented in `src/include/anlz_index.hpp`; the exporter writes one folder per
+track and needs neither the 128-folder fanout nor a harvested address.
 
+## Feed it the path exactly as written
 
-## Open problem: the player will not display our analysis
-
-Browsing works. Playback works. Duration is right. But no waveform, grid or cues,
-even when our analysis sits in the exact folder the player computes and
-`analyze_path` agrees with it.
-
-Individually proven correct against a CDJ-validated drive (`random-usb`):
-
-* our audio — plays with a waveform under that drive's pdb
-* our ANLZ bytes — display correctly when placed at that drive's `analyze_path`
-* our track rows — the same six tracks analysed by us and diffed field by field
-  against rekordbox's rows for the identical files: `file_size`, `sample_rate`,
-  `bitmask`, `u3@18`, `u4@1a`, `u5@56`, `u7@5c` all match; the raw byte dump shows
-  an identical 21-slot string layout
-* the tables we leave empty — the working pdb still works with genres, albums,
-  labels and artwork emptied
-* the full `PIONEER` skeleton — now generated, `USBMNG.DAT` byte-identical
-* the linkage — our pdb using rekordbox's exact `file_path` and `analyze_path`,
-  with our analysis in that folder, still does not display
-
-### Where to look next
-
-The format is DeviceSQL (Encirq, 1998; now Ubiquitous AI). It is proprietary,
-with no published format spec or source, and its SQL is compiled to C at build
-time, so all query logic lives in the player firmware. DeviceSQL ships MPHash and
-MPAVL indexing, which is very likely what the `page_flags & 0x40` "index" pages
-are. We reproduce their *shape* — `u32 page_index | u32 first_data_page | u32
-0x03ffffff | u32 0 | u32 word5 | N entries | 0x1ffffff8 fill` — but the meaning is
-inferred from six sample files. Entries look like row pointers rather than plain
-page numbers (`0x65b` = page 203, slot 3), so an index that merely looks right may
-not resolve a lookup. If the player reaches analysis through an index rather than
-straight off the row, that would be invisible to black-box testing, since browsing
-clearly takes a different path.
-
-Getting further probably needs the DeviceSQL format documentation or firmware
-disassembly, not more USB experiments.
-
-
-## Measured weight table
-
-Recovered by using rekordbox itself as the oracle: generate files with controlled
-names, import and export them, then read the folder rekordbox assigned to each
-from `export.pdb`. rekordbox and the player agree on this function, so no CDJ is
-needed — 50 samples came from three exports.
-
-Weight is indexed by a character's distance from the **end of the filename**,
-counting the extension (so the last character of an `.mp3` stem is offset 4).
-Values are mod 200003.
-
-| end offset | weight |
-|---|---|
-| 4 | 84673 |
-| 5 | 128047 |
-| 6 | 119759 |
-| 7 | 142065 |
-| 8 | 103380 |
-| 9 | 172628 |
-| 10 | 110359 |
-| 11 | 10281 |
-| 12 | 194214 |
-| 13 | 161890 |
-| 14 | 41273 |
-| 15 | 184536 |
-| 16 | 157977 |
-| 17 | 158186 |
-| 18 | 50320 |
-| 19 | 64015 |
-| 21 | 127140 |
-| 23 | 31025 |
-| 25 | 100387 |
-| 27 | 31896 |
-
-Offsets 4, 5 and 6 independently match the constants recovered earlier from CDJ
-probes (84673 / 128047 / 119759), confirming the weights are position-from-the-end
-constants that transfer between filenames of different lengths and content.
-
-Carries must be resolved when combining measurements: an observation only fixes
-`W` modulo the wrap count, so each measurement yields a candidate set
-`{(delta + k*(2^32 mod P)) * dv^-1}` with `k` bounded by the signed character
-delta, and the true weight is the intersection across measurements. Probes using
-characters *below* the reference (negative deltas) shift the carry pattern and
-resolve ties that same-direction probes cannot.
-
----
+The hash runs over UTF-16 code units of the USB-relative path, leading slash
+included, forward slashes, no case folding. Accented characters contribute
+whatever normalisation form the path is stored in, so a name written NFD hashes
+differently from the same name written NFC. Whatever goes on the drive is what
+must be hashed.
 
 # Confirmed on hardware (CDJ-2000NXS)
 
@@ -182,23 +109,16 @@ located, invisible. Real exports sit at 6-7 for most of a track. `WhitenessSerie
 ranks each column against the rest of its own track and maps it onto the measured
 distribution. See `anlz_writer.cpp`.
 
-## 3. The player does compute the folder, but P need not be solved
+## 3. The folder the player picks
 
 Measured directly: for `/Contents/TE3F.mp3` the player independently chose
-`P014/00000378`, and for `/Contents/TC2D.mp3` `P045/00011063` — both indices
-exactly as predicted by the constants in `anlz_index.json`. So the index half is
-solved and confirmed against hardware.
+`P014/00000378`, and for `/Contents/TC2D.mp3` `P045/00011063`. Both are what the
+function at the top of this document computes, so nothing has to be harvested,
+learned or fanned out — the exporter writes the one folder the player will read.
 
-`P` remains an unsolved second hash (not a function of the index or of the raw
-32-bit hash; searched every shift 0-31 against moduli 2-400). It does not need
-solving: writing the analysis into all 128 `P000`-`P07F` folders at the computed
-index covers whichever the player picks, and that is confirmed working. Cost is
-~61 KB x 128 per track, so prefer the exact folder when it is known.
-
-`ui/duckbox-learn` recovers the exact folder from a player that has analysed a
-track, and caches it in `ui/anlz-folders.json`. That path also sidesteps the
-index computation entirely, which is what makes arbitrary (non-`Txxx`) filenames
-work.
+Before the function was recovered, the workaround was to write the analysis into
+all 128 `P000`-`P07F` folders at the computed index and let the player pick.
+That also worked, and is what the first hardware confirmation ran on.
 
 ## 4. USBMNG.DAT is a slot table
 
