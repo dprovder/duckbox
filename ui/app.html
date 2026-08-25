@@ -330,6 +330,11 @@ tr[draggable=true] td.num{cursor:grab}
       <label>Destination folder (USB mount or any dir)</label>
       <input id="expDest" value="/Volumes/">
     </div>
+    <div class="field">
+      <label><input type="checkbox" id="expColour"> Colour waveforms (CDJ-3000 only)</label>
+      <p class="hint">Adds the colour waveform and extended cue tags. A CDJ-2000NXS
+      rejects them with E-8709 — leave this off for NXS drives.</p>
+    </div>
     <div class="modal-actions">
       <button class="btn" id="expCancel">Cancel</button>
       <button class="btn primary" id="expRun">Build USB</button>
@@ -1341,7 +1346,7 @@ function wireModals(){
         JOIN track_analysis ta USING(pos) GROUP BY ta.filename
       ) pl ON pl.fn = d.filename
       WHERE d.filename IN (SELECT filename FROM track_analysis WHERE pos IN (${list}))
-    ) TO ${sqlStr(dest)} (FORMAT rekordbox)`;
+    ) TO ${sqlStr(dest)} (FORMAT rekordbox${document.getElementById('expColour').checked ? ', colour true' : ''})`;
     try{
       const t0=Date.now();
       await duck(sql);

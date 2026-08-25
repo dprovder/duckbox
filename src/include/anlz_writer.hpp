@@ -20,10 +20,13 @@ std::string BuildAnlzDatBytes(const std::string &path, const std::vector<double>
                               const std::vector<uint8_t> &low, const std::vector<uint8_t> &mid,
                               const std::vector<uint8_t> &high,
                               const std::vector<AnlzCue> &cues = {});
+// `colour` adds the CDJ-3000-era tags (extended cues + the two colour waveforms).
+// A CDJ-2000NXS rejects them -- see the note in BuildAnlzExtBytes -- so it is off
+// by default and reached with COPY ... (FORMAT rekordbox, colour true).
 std::string BuildAnlzExtBytes(const std::string &path, const std::vector<uint8_t> &height,
                               const std::vector<uint8_t> &low, const std::vector<uint8_t> &mid,
                               const std::vector<uint8_t> &high,
-                              const std::vector<AnlzCue> &cues = {});
+                              const std::vector<AnlzCue> &cues = {}, bool colour = false);
 
 // rb_anlz_dat(path, beats DOUBLE[], bpm, downbeat, height[], low[], mid[], high[])
 //   -> BLOB : ANLZ0000.DAT (PPTH, PQTZ, PWAV, PWV2, PVBR).

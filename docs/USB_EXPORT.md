@@ -66,6 +66,36 @@ COPY rb_deck TO '/Volumes/YOUR_USB' (FORMAT rekordbox);
 right column names works. `ui/duckbox-usb` is a thin wrapper that adds the cue
 join and preserves `USBMNG.DAT`.
 
+## Colour waveforms — CDJ-3000 only
+
+By default the `.EXT` carries only `PPTH` + `PWV3`, because a CDJ-2000NXS throws
+`E-8709` when it meets the newer tags. For a CDJ-3000, turn them on:
+
+```zsh
+COLOUR=1 ui/duckbox-usb /Volumes/YOUR_USB
+```
+
+or tick **Colour waveforms (CDJ-3000 only)** in the UI's export dialog, or in raw
+SQL:
+
+```sql
+COPY rb_deck TO '/Volumes/YOUR_USB' (FORMAT rekordbox, colour true);
+```
+
+That adds, in the order a real rekordbox `.EXT` uses:
+
+    PPTH PWV3 PCOB PCOB PCO2 PCO2 PWV5 PWV4
+
+`PWV5` colours are computed with rekordbox's own function, lifted from the
+binary — see [REKORDBOX_BINARY.md](REKORDBOX_BINARY.md). A real export also
+carries `PQT2` (extended beat grid) and `PSSI` (phrase structure) between those
+tags; we do not implement either, so a 3000 gets colour waveforms and extended
+cues but no phrase bar.
+
+**Untested on hardware.** The tag set and ordering match a real export and the
+colour values sit in a sane distribution, but no CDJ-3000 has read one of these
+yet. Take a throwaway drive, not your gig stick.
+
 ## 3. Eject
 
 ```zsh

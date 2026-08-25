@@ -510,17 +510,32 @@ uint16_t FileTypeFromPath(const std::string &p) {
 //===--------------------------------------------------------------------===//
 struct RbBindData : public FunctionData {
 	std::map<std::string, idx_t> col; // field name -> input column index
+	bool colour = false;              // emit the CDJ-3000-era .EXT tags
 	unique_ptr<FunctionData> Copy() const override { return make_uniq<RbBindData>(*this); }
-	bool Equals(const FunctionData &o) const override { return col == ((const RbBindData &)o).col; }
+	bool Equals(const FunctionData &o) const override {
+		auto &r = (const RbBindData &)o;
+		return col == r.col && colour == r.colour;
+	}
 };
 
-static unique_ptr<FunctionData> RbBind(ClientContext &, CopyFunctionBindInput &,
+static unique_ptr<FunctionData> RbBind(ClientContext &, CopyFunctionBindInput &bind_input,
                                        const vector<Identifier> &names, const vector<LogicalType> &) {
 	auto bd = make_uniq<RbBindData>();
 	for (idx_t i = 0; i < names.size(); i++) {
 		std::string n = names[i].GetIdentifierName();
 		for (auto &c : n) c = (char)tolower((unsigned char)c);
 		bd->col[n] = i;
+	}
+	// COPY ... (FORMAT rekordbox, colour true) adds the CDJ-3000 .EXT tags. Off by
+	// default: they make a CDJ-2000NXS throw E-8709. Unknown options are ignored
+	// rather than rejected, so DuckDB's own COPY options still pass through.
+	for (auto &kv : bind_input.info.options) {
+		std::string k = kv.first;
+		for (auto &c : k) c = (char)tolower((unsigned char)c);
+		if (k == "colour" || k == "color") {
+			bd->colour = kv.second.empty() ||
+			             BooleanValue::Get(kv.second[0].DefaultCastAs(LogicalType::BOOLEAN));
+		}
 	}
 	return std::move(bd);
 }
@@ -651,7 +666,8 @@ static void RbSink(ExecutionContext &, FunctionData &bind, GlobalFunctionData &g
 
 static void RbCombine(ExecutionContext &, FunctionData &, GlobalFunctionData &, LocalFunctionData &) {}
 
-static void RbFinalize(ClientContext &, FunctionData &, GlobalFunctionData &gstate) {
+static void RbFinalize(ClientContext &, FunctionData &bind, GlobalFunctionData &gstate) {
+	bool colour = bind.Cast<RbBindData>().colour;
 	auto &gs = gstate.Cast<RbGlobalState>();
 	namespace fs = std::filesystem;
 	fs::create_directories(fs::path(gs.usb_root) / "PIONEER" / "rekordbox");
@@ -701,7 +717,8 @@ static void RbFinalize(ClientContext &, FunctionData &, GlobalFunctionData &gsta
 		                                    t.wf_height, t.wf_low, t.wf_mid, t.wf_high, t.cues);
 		std::string ext;
 		if (!t.wf_height.empty()) {
-			ext = BuildAnlzExtBytes(t.content_path, t.wf_height, t.wf_low, t.wf_mid, t.wf_high, t.cues);
+			ext = BuildAnlzExtBytes(t.content_path, t.wf_height, t.wf_low, t.wf_mid, t.wf_high, t.cues,
+			                        colour);
 		}
 		uint32_t aix = t.anlz_index >= 0 ? (uint32_t)t.anlz_index : anlz::IndexFor(t.content_path);
 		int apf = (t.anlz_p >= 0 && t.anlz_p < anlz::kPFolders) ? t.anlz_p : anlz::PFolderFor(aix);

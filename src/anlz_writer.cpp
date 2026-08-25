@@ -383,22 +383,29 @@ std::string BuildAnlzDatBytes(const std::string &path, const std::vector<double>
 
 std::string BuildAnlzExtBytes(const std::string &path, const std::vector<uint8_t> &h,
                               const std::vector<uint8_t> &lo, const std::vector<uint8_t> &mi,
-                              const std::vector<uint8_t> &hi, const std::vector<AnlzCue> &cues) {
+                              const std::vector<uint8_t> &hi, const std::vector<AnlzCue> &cues,
+                              bool colour) {
 	BE sec;
 	PutTag(sec, "PPTH", 0x10, BuildPath(path));
 	PutTag(sec, "PWV3", 0x18, BuildMonoDetail(h, lo, mi, hi));
-	// NOTE: a CDJ-2000NXS-validated .EXT contains ONLY PPTH + PWV3. The extra tags
-	// below (PCOB/PCO2 extended cues, and the CDJ-3000-era PWV4/PWV5 colour
-	// waveforms) are newer than the NXS firmware and appear to trip it (E-8709
-	// COMMUNICATION ERROR when the player scans the ANLZ). Memory cues still ship
-	// via PCOB in the .DAT. Re-enable once NXS loading is confirmed / for CDJ-3000.
-	(void)cues;
-	// PutTag(sec, "PCOB", 0x18, BuildCue(1));
-	// PutTag(sec, "PCOB", 0x18, BuildCue(0, cues));
-	// PutTag(sec, "PCO2", 0x14, BuildCue2(1));
-	// PutTag(sec, "PCO2", 0x14, BuildCue2(0, cues));
-	// PutTag(sec, "PWV5", 0x18, BuildColorDetail(h, lo, mi, hi));
-	// PutTag(sec, "PWV4", 0x18, BuildColorPreview(h, lo, mi, hi));
+	// A CDJ-2000NXS-validated .EXT contains ONLY PPTH + PWV3. Everything below is
+	// newer than that firmware and trips it: the player throws E-8709 while
+	// scanning the ANLZ. Memory cues still reach an NXS via PCOB in the .DAT.
+	//
+	// A CDJ-3000 expects them. Tag order matches a real rekordbox .EXT exactly:
+	//     PPTH PWV3 PCOB PCOB PCO2 PCO2 [PQT2] PWV5 PWV4 [PSSI]
+	// PQT2 (extended beat grid) and PSSI (phrase structure) are not implemented,
+	// so we emit that sequence minus those two.
+	if (colour) {
+		PutTag(sec, "PCOB", 0x18, BuildCue(1));
+		PutTag(sec, "PCOB", 0x18, BuildCue(0, cues));
+		PutTag(sec, "PCO2", 0x14, BuildCue2(1));
+		PutTag(sec, "PCO2", 0x14, BuildCue2(0, cues));
+		PutTag(sec, "PWV5", 0x18, BuildColorDetail(h, lo, mi, hi));
+		PutTag(sec, "PWV4", 0x18, BuildColorPreview(h, lo, mi, hi));
+	} else {
+		(void)cues;
+	}
 	return Frame(sec.b);
 }
 

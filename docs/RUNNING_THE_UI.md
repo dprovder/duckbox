@@ -66,7 +66,8 @@ which appends and dedupes by filename.
   chips you can keep, plus manual beat-snapped cues. Stored in the `cues` table
   and exported as ANLZ memory cues.
 - **Playlists** — sidebar, drag to reorder, rename, delete.
-- **Export USB** — tick tracks, press the button. See
+- **Export USB** — tick tracks, press the button. A **Colour waveforms**
+  checkbox adds the CDJ-3000 tags; leave it off for a CDJ-2000NXS. See
   [USB_EXPORT.md](USB_EXPORT.md).
 - **Album art**, per-track **reanalyze**, and a settings modal.
 
