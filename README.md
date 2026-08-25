@@ -111,6 +111,11 @@ Source map: `analysis.cpp` (key/loudness/aubio + unified `AnalyzeTrack`), `essen
 `waveform.cpp` (waveform DSP), `anlz_writer.cpp` (ANLZ `.DAT`/`.EXT`), `pdb_writer.cpp`
 (DeviceSQL `export.pdb` + `COPY` assembly).
 
+## Using it
+
+- [docs/USB_EXPORT.md](docs/USB_EXPORT.md) — writing a CDJ USB, drive prep to eject.
+- [docs/RUNNING_THE_UI.md](docs/RUNNING_THE_UI.md) — launching the library UI.
+
 ## Build
 
 ```sh
