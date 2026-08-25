@@ -37,8 +37,23 @@ ui/duckbox-usb /Volumes/YOUR_USB library.duckdb "d.pos IN ('001','005','037')"
 ui/duckbox-usb /Volumes/YOUR_USB library.duckdb "d.bpm BETWEEN 122 AND 126"
 ```
 
-**From the UI** — tick tracks in the list and press **Export USB**. Same
+**From the UI** — tick tracks, type a destination, press **Build USB**. Same
 exporter, reached over HTTP. See [RUNNING_THE_UI.md](RUNNING_THE_UI.md).
+
+The two front ends do not send the same query, and neither is strictly better:
+
+|  | `ui/duckbox-usb` | UI **Build USB** |
+|---|---|---|
+| track selection | whole library, or a `WHERE` clause | only the ticked rows |
+| cue points | yes | yes |
+| album artwork | **no** | yes |
+| playlists | **no** | yes |
+| clears the previous `PIONEER/` + `Contents/` | yes | no — writes over the top |
+| preserves an existing `USBMNG.DAT` | yes | no — writes a fresh one |
+| strips `._` sidecars, calls `sync` | yes | no |
+
+So the UI writes a *richer* export and the script does the drive hygiene. If you
+export from the UI, run `sync` yourself before ejecting.
 
 **Raw, if you want to see the machinery:**
 
